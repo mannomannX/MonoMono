@@ -171,7 +171,7 @@ echo "-------------------------------------------"
 echo "🚀 Starting the wizard for '$GITHUB_USER'..."
 
 echo "1/5: Loading repositories..."
-REPOS_LIST=$(gh repo list @me --limit 1000 --json "nameWithOwner" --jq '.[].nameWithOwner')
+REPOS_LIST=$(gh repo list "$GITHUB_USER" --limit 1000 --json "nameWithOwner" --jq '.[].nameWithOwner')
 if [ -z "$REPOS_LIST" ]; then echo "❌ No repositories found for '$GITHUB_USER'."; exit 1; fi
 
 echo -e "2/5: Select the sub-repos to fuse:\n(Navigation: Arrow keys, Selection: TAB, Confirmation: ENTER)"
