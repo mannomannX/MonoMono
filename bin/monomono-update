@@ -1,0 +1,15 @@
+#!/bin/bash
+# MonoMono Update-Skript
+
+# Ermittle das aktuelle GitHub-Repo aus dem Git-Remote
+REMOTE_URL=$(git config --get remote.origin.url)
+if [ -z "$REMOTE_URL" ]; then
+  echo "❌ Fehler: Dies scheint kein Git-Repository zu sein. Bitte führe den Befehl im Ordner deines Fusions-Repos aus."
+  exit 1
+fi
+
+REPO_PATH=$(echo "$REMOTE_URL" | sed -E 's/.*github.com[:/](.*)\.git/\1/')
+
+echo "ℹ️ Starte den Update-Workflow für das Repo: $REPO_PATH"
+gh workflow run sync.yml --repo "$REPO_PATH" || { echo "❌ Fehler beim Starten des Workflows."; exit 1; }
+echo "✅ Befehl zum Aktualisieren gesendet. Verfolge den Fortschritt hier: https://github.com/$REPO_PATH/actions"

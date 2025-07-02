@@ -1,0 +1,29 @@
+#!/bin/bash
+# MonoMono Cleanup-Skript
+
+echo "MonoMono Cleanup-Assistent"
+echo "--------------------------"
+read -p "? Gib den Pfad zum Fusions-Repo ein (z.B. user/repo): " FUSION_REPO
+read -p "? Gib die zu bereinigenden Sub-Repos ein (user/repo1,user/repo2,...): " SUB_REPOS
+
+# Webhooks entfernen
+echo "-> Suche und entferne Webhooks in den Sub-Repos..."
+DISPATCH_URL="https://api.github.com/repos/$FUSION_REPO/dispatches"
+for repo in $(echo $SUB_REPOS | sed "s/,/ /g"); do
+    echo "   - Prüfe Repo: $repo"
+    # Finde die ID des Webhooks, der auf unser Fusions-Repo zeigt, und lösche ihn
+    HOOK_IDS=$(gh api "repos/$repo/hooks" --jq ".[] | select(.config.url == \"$DISPATCH_URL\") | .id")
+    for hook_id in $HOOK_IDS; do
+        echo "     - Lösche Webhook mit ID: $hook_id"
+        gh api --method DELETE "repos/$repo/hooks/$hook_id" --silent
+    done
+done
+
+# Optional das Fusions-Repo löschen
+read -p "? Soll auch das Fusions-Repo '$FUSION_REPO' auf GitHub gelöscht werden? (j/n) " DELETE_REPO
+if [[ "$DELETE_REPO" == "j" || "$DELETE_REPO" == "J" ]]; then
+    echo "-> Lösche Repository: $FUSION_REPO"
+    gh repo delete "$FUSION_REPO" --yes
+fi
+
+echo "✅ Aufräumen abgeschlossen."
