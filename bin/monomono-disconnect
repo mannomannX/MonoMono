@@ -1,11 +1,9 @@
 #!/bin/bash
-# MonoMono Disconnect-Skript
-# Entfernt Webhooks, die von MonoMono erstellt wurden.
+# MonoMono Disconnect-Skript v1.0
 
 echo "MonoMono Disconnect Assistent"
 echo "--------------------------------"
-echo "Dieses Skript entfernt die Webhooks von deinen Sub-Repos,"
-echo "die auf ein Fusions-Repo zeigen."
+echo "Dieses Skript entfernt die Webhooks von deinen Sub-Repos."
 echo
 
 read -p "? Gib den Pfad zum Fusions-Repo ein (z.B. user/repo): " FUSION_REPO
@@ -20,7 +18,6 @@ DISPATCH_URL="https://api.github.com/repos/$FUSION_REPO/dispatches"
 
 for repo in $(echo $SUB_REPOS | sed "s/,/ /g"); do
     echo "   - Prüfe Repo: $repo"
-    # Finde die ID des Webhooks, der auf unser Fusions-Repo zeigt
     HOOK_IDS=$(gh api "repos/$repo/hooks" --jq ".[] | select(.config.url == \"$DISPATCH_URL\") | .id" 2>/dev/null)
     
     if [ -z "$HOOK_IDS" ]; then
