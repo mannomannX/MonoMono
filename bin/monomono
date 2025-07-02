@@ -1,6 +1,6 @@
 #!/bin/bash
 # ==============================================================================
-# MONOMONO - HAUPTSKRIPT (v5.11 - mit PAT-Validierung)
+# MONOMONO - HAUPTSKRIPT (v5.12 - Finaler cURL-Fix)
 # ==============================================================================
 # Dieses Skript erstellt ein "Fusions-Repo" aus mehreren GitHub-Repositories.
 # Es führt ein robustes, einmaliges Setup für seine Abhängigkeiten durch und
@@ -33,7 +33,6 @@ case "$1" in
         ;;
 esac
 
-
 # Lade Sprach- und Hilfsdateien, falls vorhanden
 if [ -f "$(dirname "$0")/../lib/i18n.sh" ]; then
     source "$(dirname "$0")/../lib/i18n.sh"
@@ -52,7 +51,7 @@ fi
 # --- HAUPTLOGIK ---
 
 # 1. PRÜFUNG DER VORAUSSETZUNGEN
-if ! command -v gh &>/dev/null || ! command -v fzf &>/dev/null; then
+if ! command -v gh &>/dev/null || ! command -v fzf &>/dev/null || ! command -v jq &>/dev/null; then
     # --- SETUP-MODUS ---
     echo "🔎 Checking system requirements..."
     echo "--------------------------------------------------------------------"
@@ -62,7 +61,7 @@ if ! command -v gh &>/dev/null || ! command -v fzf &>/dev/null; then
     
     OS_TYPE="$(uname -s)"
     
-    read -p "? Required tools are missing. Install them now? (y/n) " choice
+    read -p "? Required tools (gh, fzf, jq) are missing. Install them now? (y/n) " choice
     if [[ ! "$choice" =~ ^[YyJj]$ ]]; then echo "❌ Aborted by user."; exit 1; fi
 
     case "$OS_TYPE" in
@@ -72,9 +71,11 @@ if ! command -v gh &>/dev/null || ! command -v fzf &>/dev/null; then
                 sudo apt-get update
                 if ! command -v gh &>/dev/null; then echo "-> Installing 'GitHub CLI' (gh)..."; sudo apt-get install -y gh; fi
                 if ! command -v fzf &>/dev/null; then echo "-> Installing 'fzf'..."; sudo apt-get install -y fzf; fi
+                if ! command -v jq &>/dev/null; then echo "-> Installing 'jq'..."; sudo apt-get install -y jq; fi
             elif command -v dnf &>/dev/null; then
                 if ! command -v gh &>/dev/null; then sudo dnf install -y gh; fi
                 if ! command -v fzf &>/dev/null; then sudo dnf install -y fzf; fi
+                if ! command -v jq &>/dev/null; then sudo dnf install -y jq; fi
             else
                 echo "❌ Error: Could not find a suitable Linux package manager (apt, dnf)." >&2; exit 1
             fi
@@ -83,11 +84,13 @@ if ! command -v gh &>/dev/null || ! command -v fzf &>/dev/null; then
             if ! command -v brew &>/dev/null; then echo "❌ Error: Homebrew (brew) not found."; exit 1; fi
             if ! command -v gh &>/dev/null; then brew install gh; fi
             if ! command -v fzf &>/dev/null; then brew install fzf; fi
+            if ! command -v jq &>/dev/null; then brew install jq; fi
             ;;
         CYGWIN*|MINGW*|MSYS*)
             if ! command -v winget &>/dev/null; then echo "❌ Error: winget not found."; exit 1; fi
             if ! command -v gh &>/dev/null; then winget install --id GitHub.cli -e --accept-source-agreements; fi
             if ! command -v fzf &>/dev/null; then winget install --id junegunn.fzf -e --accept-source-agreements; fi
+            if ! command -v jq &>/dev/null; then winget install --id jqlang.jq -e --accept-source-agreements; fi
             ;;
         *)
             echo "❌ Error: Unsupported operating system ($OS_TYPE)." >&2; exit 1
@@ -140,8 +143,7 @@ fi
 echo "--------------------------------------------------------------------"
 echo "🔑 INFO: Um alle deine Repositories aufzulisten und zu erstellen,"
 echo "   wird ein persönlicher Zugriffstoken (PAT) mit 'repo'-Rechten benötigt."
-echo "‼️  AKTION ERFORDERLICH: Bitte erstelle jetzt einen Token."
-echo "   Öffne dazu die URL: https://github.com/settings/tokens/new"
+echo "‼️  AKTION ERFORDERLICH: Bitte öffne die URL https://github.com/settings/tokens/new"
 echo "   Anleitung: Wähle die 'repo'-Scope, generiere den Token und kopiere ihn."
 echo "--------------------------------------------------------------------"
 PAT=""
@@ -150,29 +152,23 @@ while [ -z "$PAT" ]; do
     echo
 done
 
-# Token-Validierung
-export GH_TOKEN=$PAT
+# Token-Validierung mit cURL
 echo "-> Überprüfe den Access Token..."
-VALIDATED_USER=$(gh api user --jq .login 2>/dev/null)
-if [ -z "$VALIDATED_USER" ]; then
-    echo "❌ FEHLER: Der eingegebene Token ist ungültig oder hat nicht die nötigen Rechte." >&2
-    echo "   Bitte erstelle einen neuen Token mit 'repo'-Scope und starte das Skript erneut." >&2
+HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: token $PAT" https://api.github.com/user)
+if [ "$HTTP_STATUS" -ne 200 ]; then
+    echo "❌ FEHLER: Der eingegebene Token ist ungültig oder hat nicht die nötigen Rechte (HTTP-Status: $HTTP_STATUS)." >&2
     exit 1
 fi
+VALIDATED_USER=$(curl -s -H "Authorization: token $PAT" https://api.github.com/user | jq -r '.login')
 echo "✔ Access Token ist gültig für Benutzer '$VALIDATED_USER'."
+export GH_TOKEN=$PAT
 
 # 5. PROJEKT-SETUP
 echo "-------------------------------------------"
 echo "🚀 Starte den Assistenten für '$GITHUB_USER'..."
 
 echo "1/5: Lade Repositories via API..."
-if ! command -v jq &>/dev/null; then
-    echo "⚠️  Warnung: 'jq' wird für die API-Abfrage benötigt. Versuche, es zu installieren..."
-    if command -v apt-get &>/dev/null; then sudo apt-get update && sudo apt-get install -y jq;
-    elif command -v dnf &>/dev/null; then sudo dnf install -y jq;
-    elif command -v brew &>/dev/null; then brew install jq; fi
-fi
-REPOS_LIST=$(gh api "user/repos?type=owner&per_page=100" | jq -r '.[].full_name')
+REPOS_LIST=$(curl -s -H "Authorization: token $PAT" "https://api.github.com/user/repos?type=owner&per_page=100" | jq -r '.[].full_name')
 if [ -z "$REPOS_LIST" ]; then echo "❌ Keine Repositories für '$GITHUB_USER' gefunden."; exit 1; fi
 
 echo -e "2/5: Wähle die zu fusionierenden Repos:\n(Navigation: Pfeiltasten, Auswahl: TAB, Bestätigen: ENTER)"
