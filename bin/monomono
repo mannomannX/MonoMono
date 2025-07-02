@@ -1,6 +1,6 @@
 #!/bin/bash
 # ==============================================================================
-# MONOMONO - HAUPTSKRIPT (v5.2 - mit APT-Update-Fix)
+# MONOMONO - HAUPTSKRIPT (v5.3 - Robuster Linux-Installer)
 # ==============================================================================
 # Dieses Skript erstellt ein "Fusions-Repo" aus mehreren GitHub-Repositories.
 # Es führt ein robustes, einmaliges Setup für seine Abhängigkeiten durch und
@@ -51,45 +51,47 @@ if ! command -v gh &>/dev/null || ! command -v fzf &>/dev/null; then
     echo "   Starting the one-time installation wizard..."
     echo "--------------------------------------------------------------------"
     
-    INSTALL_CMD=""
     OS_TYPE="$(uname -s)"
-
-    case "$OS_TYPE" in
-        Linux*)
-            if command -v apt-get &>/dev/null; then
-                INSTALL_CMD="sudo apt-get update && sudo apt-get install -y"
-            elif command -v dnf &>/dev/null; then
-                INSTALL_CMD="sudo dnf install -y"
-            fi
-            GH_PKG_NAME="gh"
-            FZF_PKG_NAME="fzf"
-            ;;
-        Darwin*)
-            if command -v brew &>/dev/null; then INSTALL_CMD="brew install"; fi
-            GH_PKG_NAME="gh"; FZF_PKG_NAME="fzf"
-            ;;
-        CYGWIN*|MINGW*|MSYS*) # Windows
-            if command -v winget &>/dev/null; then INSTALL_CMD="winget"; fi
-            ;;
-    esac
-
-    if [ -z "$INSTALL_CMD" ]; then
-        echo "❌ Error: Could not find a suitable package manager for your system ($OS_TYPE)." >&2
-        exit 1
-    fi
     
     read -p "? Required tools are missing. Install them now? (y/n) " choice
     if [[ ! "$choice" =~ ^[YyJj]$ ]]; then echo "❌ Aborted by user."; exit 1; fi
 
-    # Installation durchführen
-    if ! command -v gh &>/dev/null; then
-        echo "-> Attempting to install 'GitHub CLI'..."
-        if [ "$INSTALL_CMD" == "winget" ]; then winget install --id GitHub.cli -e --accept-source-agreements; else $INSTALL_CMD $GH_PKG_NAME; fi
-    fi
-    if ! command -v fzf &>/dev/null; then
-        echo "-> Attempting to install 'fzf'..."
-        if [ "$INSTALL_CMD" == "winget" ]; then winget install --id junegunn.fzf -e --accept-source-agreements; else $INSTALL_CMD $FZF_PKG_NAME; fi
-    fi
+    case "$OS_TYPE" in
+        Linux*)
+            if command -v apt-get &>/dev/null; then
+                echo "-> Updating package lists (apt-get update)..."
+                sudo apt-get update
+                if ! command -v gh &>/dev/null; then
+                    echo "-> Installing 'GitHub CLI' (gh)..."
+                    sudo apt-get install -y gh
+                fi
+                if ! command -v fzf &>/dev/null; then
+                    echo "-> Installing 'fzf'..."
+                    sudo apt-get install -y fzf
+                fi
+            elif command -v dnf &>/dev/null; then
+                if ! command -v gh &>/dev/null; then sudo dnf install -y gh; fi
+                if ! command -v fzf &>/dev/null; then sudo dnf install -y fzf; fi
+            else
+                echo "❌ Error: Could not find a suitable Linux package manager (apt, dnf)." >&2
+                exit 1
+            fi
+            ;;
+        Darwin*) # macOS
+            if ! command -v brew &>/dev/null; then echo "❌ Error: Homebrew (brew) not found."; exit 1; fi
+            if ! command -v gh &>/dev/null; then brew install gh; fi
+            if ! command -v fzf &>/dev/null; then brew install fzf; fi
+            ;;
+        CYGWIN*|MINGW*|MSYS*) # Windows
+            if ! command -v winget &>/dev/null; then echo "❌ Error: winget not found."; exit 1; fi
+            if ! command -v gh &>/dev/null; then winget install --id GitHub.cli -e --accept-source-agreements; fi
+            if ! command -v fzf &>/dev/null; then winget install --id junegunn.fzf -e --accept-source-agreements; fi
+            ;;
+        *)
+            echo "❌ Error: Unsupported operating system ($OS_TYPE)." >&2
+            exit 1
+            ;;
+    esac
 
     echo
     echo "--------------------------------------------------------------------"
