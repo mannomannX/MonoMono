@@ -1,6 +1,6 @@
 #!/bin/bash
 # ==============================================================================
-# MONOMONO - HAUPTSKRIPT (v5.9 - Finale Validierung)
+# MONOMONO - HAUPTSKRIPT (v5.10 - Finaler Push-Fix)
 # ==============================================================================
 # Dieses Skript erstellt ein "Fusions-Repo" aus mehreren GitHub-Repositories.
 # Es führt ein robustes, einmaliges Setup für seine Abhängigkeiten durch und
@@ -33,6 +33,7 @@ case "$1" in
         ;;
 esac
 
+
 # Lade Sprach- und Hilfsdateien, falls vorhanden
 if [ -f "$(dirname "$0")/../lib/i18n.sh" ]; then
     source "$(dirname "$0")/../lib/i18n.sh"
@@ -47,6 +48,7 @@ else
     TEXT_ALL_DONE="✅ All done! Your fusion repo is now being populated."
 fi
 
+
 # --- HAUPTLOGIK ---
 
 # 1. PRÜFUNG DER VORAUSSETZUNGEN
@@ -57,7 +59,9 @@ if ! command -v gh &>/dev/null || ! command -v fzf &>/dev/null; then
     echo "⚠️  One or more required tools are not available."
     echo "   Starting the one-time installation wizard..."
     echo "--------------------------------------------------------------------"
+    
     OS_TYPE="$(uname -s)"
+    
     read -p "? Required tools are missing. Install them now? (y/n) " choice
     if [[ ! "$choice" =~ ^[YyJj]$ ]]; then echo "❌ Aborted by user."; exit 1; fi
 
@@ -146,7 +150,6 @@ while [ -z "$PAT" ]; do
     echo
 done
 
-# Setze den PAT als Umgebungsvariable, um alle folgenden gh-Befehle zu authentifizieren
 export GH_TOKEN=$PAT
 echo "✔ Access Token wurde für diese Sitzung gesetzt."
 
@@ -162,20 +165,19 @@ if ! command -v jq &>/dev/null; then
     elif command -v brew &>/dev/null; then brew install jq; fi
 fi
 REPOS_LIST=$(gh api "user/repos?type=owner&per_page=100" | jq -r '.[].full_name')
-if [ -z "$REPOS_LIST" ]; then echo "❌ Keine Repositories für '$GITHUB_USER' gefunden oder der Token ist ungültig."; exit 1; fi
+if [ -z "$REPOS_LIST" ]; then echo "❌ Keine Repositories gefunden oder der Token ist ungültig."; exit 1; fi
 
 echo -e "2/5: Wähle die zu fusionierenden Repos:\n(Navigation: Pfeiltasten, Auswahl: TAB, Bestätigen: ENTER)"
 SELECTED_REPOS=$(echo "$REPOS_LIST" | fzf --multi --height 40% --border --prompt="Select> ")
 if [ -z "$SELECTED_REPOS" ]; then echo "❌ Aborted: No repositories selected."; exit 1; fi
 SUB_REPOS=$(echo "$SELECTED_REPOS" | tr '\n' ',' | sed 's/,$//')
 
-# Eingabe des Repo-Namens mit Validierung
 while true; do
-    read -p "? Wie soll das neue Fusions-Repo heißen? (Keine Leerzeichen erlaubt): " FUSION_REPO_NAME
+    read -p "? What should the new fusion repo be named? (No spaces allowed): " FUSION_REPO_NAME
     if [[ "$FUSION_REPO_NAME" =~ \  ]]; then
-        echo "❌ Fehler: Der Name darf keine Leerzeichen enthalten. Bitte versuche es erneut."
+        echo "❌ Error: The name cannot contain spaces. Please try again."
     elif [ -z "$FUSION_REPO_NAME" ]; then
-        echo "❌ Fehler: Der Name darf nicht leer sein."
+        echo "❌ Error: The name cannot be empty."
     else
         break
     fi
@@ -199,7 +201,6 @@ fi
 # 7. REPO ERSTELLEN & SECRET SETZEN
 echo "-> Creating repo '$FUSION_REPO_NAME'..."
 gh repo create "$GITHUB_USER/$FUSION_REPO_NAME" --public --description "Automatic fusion repo by MonoMono" >/dev/null || { echo "❌ Error creating the GitHub repo."; exit 1; }
-
 echo "-> Speichere den Token sicher als 'ACCESS_TOKEN' Secret im neuen Repo..."
 echo -n "$PAT" | gh secret set ACCESS_TOKEN --repo "$GITHUB_USER/$FUSION_REPO_NAME" || { echo "❌ Fehler beim Setzen des Secrets."; exit 1; }
 echo "✔ Secret erfolgreich im Repository '$FUSION_REPO_NAME' gespeichert."
@@ -262,7 +263,8 @@ git config user.name "MonoMono Script"
 git config user.email "bot@users.noreply.github.com"
 git add .
 git commit -m "CI: Add initial sync workflow"
-git push --force || { echo "❌ Error pushing the workflow."; rm -rf "$TEMP_DIR"; exit 1; }
+AUTH_URL="https://x-access-token:$PAT@github.com/$GITHUB_USER/$FUSION_REPO_NAME.git"
+git push --force "$AUTH_URL" main >/dev/null 2>&1 || { echo "❌ Fehler beim Pushen des Workflows."; rm -rf "$TEMP_DIR"; exit 1; }
 cd - >/dev/null
 rm -rf "$TEMP_DIR"
 echo "✔ Workflow file successfully pushed to GitHub."
@@ -295,5 +297,5 @@ echo "-> Starting the first workflow run..."
 gh workflow run sync.yml --repo "$GITHUB_USER/$FUSION_REPO_NAME" || { echo "❌ Error starting the workflow."; exit 1; }
 
 echo
-echo "✅ All done! Your fusion repo is now being populated."
+echo "$TEXT_ALL_DONE"
 echo "👀 Track the progress here: https://github.com/$GITHUB_USER/$FUSION_REPO_NAME/actions"
