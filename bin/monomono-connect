@@ -42,10 +42,19 @@ fi
 echo "✔ Erfolgreich bei GitHub angemeldet."
 
 # 3. BENUTZER-EINGABEN
-GITHUB_USER=$(gh auth status -h github.com --jq .user)
-echo "ℹ️ Angemeldet als Benutzer: $GITHUB_USER"
+# Lädt den gespeicherten Benutzernamen oder fragt danach
+CONFIG_FILE="$HOME/.fusion_assistant_config"
+if [ -f "$CONFIG_FILE" ]; then
+    source "$CONFIG_FILE"
+    echo "ℹ Gespeicherten Benutzernamen gefunden: $GITHUB_USER"
+else
+    read -p "? Bitte gib deinen GitHub-Benutzernamen ein: " GITHUB_USER
+    if [ -z "$GITHUB_USER" ]; then echo "❌ Name darf nicht leer sein."; exit 1; fi
+    echo "GITHUB_USER=\"$GITHUB_USER\"" > "$CONFIG_FILE"
+    echo "✔ Dein Benutzername wurde für die nächste Ausführung gespeichert."
+fi
 
-read -p "? Welches bestehende Repo soll verbunden werden? (user/repo): " FUSION_REPO
+read -p "? Welches bestehende Repo soll verbunden werden? (z.B. $GITHUB_USER/mein-repo): " FUSION_REPO
 if [ -z "$FUSION_REPO" ]; then echo "❌ Fehler: Eingabe darf nicht leer sein."; exit 1; fi
 
 echo "-> Lade verfügbare Repositories für die Auswahl..."
@@ -57,8 +66,24 @@ SELECTED_REPOS=$(echo "$REPOS_LIST" | fzf --multi --height 40% --border --prompt
 if [ -z "$SELECTED_REPOS" ]; then echo "❌ Abbruch: Keine Repositories ausgewählt."; exit 1; fi
 SUB_REPOS=$(echo "$SELECTED_REPOS" | tr '\n' ',' | sed 's/,$//')
 
+# 4. UPDATE-OPTIONEN
+echo "-------------------------------------------"
+echo "⚙️ Konfiguriere die Update-Methoden für '$FUSION_REPO'..."
+CRON_SCHEDULE=""
+read -p "? Möchtest du einen automatischen, zeitgesteuerten Sync aktivieren? (j/n) " ACTIVATE_SCHEDULE
+if [[ "$ACTIVATE_SCHEDULE" == "j" || "$ACTIVATE_SCHEDULE" == "J" ]]; then
+    read -p "? In welchem Intervall (in Stunden) soll der Sync laufen? (1-24) " SCHEDULE_HOURS
+    CRON_SCHEDULE="  schedule:\n    - cron: '0 */${SCHEDULE_HOURS:-24} * * *'"
+fi
 
-# 4. DELUXE AUTHENTIFIZIERUNGS-WORKFLOW
+SETUP_WEBHOOKS=false
+read -p "? Sollen Webhooks für Echtzeit-Updates bei jedem Push eingerichtet werden? (j/n) " ACTIVATE_WEBHOOKS
+if [[ "$ACTIVATE_WEBHOOKS" == "j" || "$ACTIVATE_WEBHOOKS" == "J" ]]; then
+    SETUP_WEBHOOKS=true
+fi
+
+
+# 5. DELUXE AUTHENTIFIZIERUNGS-WORKFLOW
 echo
 echo "--------------------------------------------------------------------"
 echo "🔑 INFO: ZUGRIFFS-TOKEN BENÖTIGT"
@@ -82,12 +107,15 @@ echo -n "$PAT" | gh secret set ACCESS_TOKEN --repo "$FUSION_REPO" || { echo "❌
 echo "✔ Secret erfolgreich im Repository '$FUSION_REPO' gespeichert."
 
 
-# 5. WORKFLOW ERSTELLEN UND PUSHEN
+# 6. WORKFLOW ERSTELLEN UND PUSHEN
 WORKFLOW_NAME="Fusion-Repo Erstellen & Aktualisieren"
+ON_TRIGGERS="on:\n  workflow_dispatch:\n"
+if [ -n "$CRON_SCHEDULE" ]; then ON_TRIGGERS+="$CRON_SCHEDULE\n"; fi
+if $SETUP_WEBHOOKS; then ON_TRIGGERS+="  repository_dispatch:\n    types: [monomono-sync-event]\n"; fi
+
 read -r -d '' WORKFLOW_CONTENT << EOM
 name: '$WORKFLOW_NAME'
-on:
-  workflow_dispatch:
+$ON_TRIGGERS
 jobs:
   sync-repos:
     runs-on: ubuntu-latest
@@ -138,24 +166,17 @@ echo "$WORKFLOW_CONTENT" > .github/workflows/sync.yml
 git config user.name "MonoMono Connect"
 git config user.email "bot@users.noreply.github.com"
 git add .
-git commit -m "CI: Add MonoMono sync workflow"
+git commit -m "CI: Add/Update MonoMono sync workflow"
 git push || { echo "❌ Fehler beim Pushen des Workflows."; rm -rf "$TEMP_DIR"; exit 1; }
 cd - >/dev/null
 rm -rf "$TEMP_DIR"
 echo "✔ Workflow-Datei erfolgreich nach '$FUSION_REPO' gepusht."
 
 
-# 6. WEBHOOKS EINRICHTEN (OPTIONAL)
-echo
-read -p "? Sollen Webhooks für Echtzeit-Updates eingerichtet werden? (j/n) " ACTIVATE_WEBHOOKS
-if [[ "$ACTIVATE_WEBHOOKS" == "j" || "$ACTIVATE_WEBHOOKS" == "J" ]]; then
+# 7. WEBHOOKS EINRICHTEN
+if $SETUP_WEBHOOKS; then
     echo "-> Richte Webhooks für die ausgewählten Sub-Repos ein..."
     DISPATCH_URL="https://api.github.com/repos/$FUSION_REPO/dispatches"
-
-    # Füge den Trigger zum Workflow hinzu (dies ist konzeptionell, da die Datei schon gepusht ist - für zukünftige Versionen)
-    # Hier fügen wir nur die Webhooks hinzu. Der Trigger muss im YAML sein.
-    # Für v1 nehmen wir an, der `repository_dispatch` muss manuell hinzugefügt werden,
-    # oder der Benutzer verlässt sich auf den manuellen Trigger.
     
     for repo in $(echo $SUB_REPOS | sed "s/,/ /g"); do
         echo "   - Für Repo: $repo"
@@ -165,12 +186,17 @@ if [[ "$ACTIVATE_WEBHOOKS" == "j" || "$ACTIVATE_WEBHOOKS" == "J" ]]; then
            -f "events[]=push" \
            -f "config[url]=$DISPATCH_URL" \
            -f "config[content_type]=json" \
-           -f "config[insecure_ssl]=0" \
+           -F "event_type=monomono-sync-event" \
            --silent || echo "     ❌ Fehler beim Einrichten des Webhooks für $repo."
     done
     echo "✔ Webhooks eingerichtet."
 fi
 
+# 8. WORKFLOW STARTEN
+echo "-> Starte den ersten Lauf des Workflows..."
+gh workflow run sync.yml --repo "$FUSION_REPO" || { echo "❌ Fehler beim Starten des Workflows."; exit 1; }
+
 echo
 echo "✅ Verbindung für '$FUSION_REPO' erfolgreich hergestellt."
-echo "   Du kannst den Workflow jetzt manuell über die 'Actions'-Seite des Repos starten."
+echo "   Der erste Synchronisations-Lauf wurde gestartet."
+echo "👀 Verfolge den Fortschritt hier: https://github.com/$FUSION_REPO/actions"
