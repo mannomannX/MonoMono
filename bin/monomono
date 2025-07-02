@@ -1,6 +1,6 @@
 #!/bin/bash
 # ==============================================================================
-# MONOMONO - HAUPTSKRIPT (v5.10 - Finaler Push-Fix)
+# MONOMONO - HAUPTSKRIPT (v5.11 - mit PAT-Validierung)
 # ==============================================================================
 # Dieses Skript erstellt ein "Fusions-Repo" aus mehreren GitHub-Repositories.
 # Es führt ein robustes, einmaliges Setup für seine Abhängigkeiten durch und
@@ -150,8 +150,16 @@ while [ -z "$PAT" ]; do
     echo
 done
 
+# Token-Validierung
 export GH_TOKEN=$PAT
-echo "✔ Access Token wurde für diese Sitzung gesetzt."
+echo "-> Überprüfe den Access Token..."
+VALIDATED_USER=$(gh api user --jq .login 2>/dev/null)
+if [ -z "$VALIDATED_USER" ]; then
+    echo "❌ FEHLER: Der eingegebene Token ist ungültig oder hat nicht die nötigen Rechte." >&2
+    echo "   Bitte erstelle einen neuen Token mit 'repo'-Scope und starte das Skript erneut." >&2
+    exit 1
+fi
+echo "✔ Access Token ist gültig für Benutzer '$VALIDATED_USER'."
 
 # 5. PROJEKT-SETUP
 echo "-------------------------------------------"
@@ -165,7 +173,7 @@ if ! command -v jq &>/dev/null; then
     elif command -v brew &>/dev/null; then brew install jq; fi
 fi
 REPOS_LIST=$(gh api "user/repos?type=owner&per_page=100" | jq -r '.[].full_name')
-if [ -z "$REPOS_LIST" ]; then echo "❌ Keine Repositories gefunden oder der Token ist ungültig."; exit 1; fi
+if [ -z "$REPOS_LIST" ]; then echo "❌ Keine Repositories für '$GITHUB_USER' gefunden."; exit 1; fi
 
 echo -e "2/5: Wähle die zu fusionierenden Repos:\n(Navigation: Pfeiltasten, Auswahl: TAB, Bestätigen: ENTER)"
 SELECTED_REPOS=$(echo "$REPOS_LIST" | fzf --multi --height 40% --border --prompt="Select> ")
@@ -173,11 +181,11 @@ if [ -z "$SELECTED_REPOS" ]; then echo "❌ Aborted: No repositories selected.";
 SUB_REPOS=$(echo "$SELECTED_REPOS" | tr '\n' ',' | sed 's/,$//')
 
 while true; do
-    read -p "? What should the new fusion repo be named? (No spaces allowed): " FUSION_REPO_NAME
+    read -p "$TEXT_PROMPT_FUSION_NAME (Keine Leerzeichen erlaubt): " FUSION_REPO_NAME
     if [[ "$FUSION_REPO_NAME" =~ \  ]]; then
-        echo "❌ Error: The name cannot contain spaces. Please try again."
+        echo "❌ Fehler: Der Name darf keine Leerzeichen enthalten. Bitte versuche es erneut."
     elif [ -z "$FUSION_REPO_NAME" ]; then
-        echo "❌ Error: The name cannot be empty."
+        echo "❌ Fehler: Der Name darf nicht leer sein."
     else
         break
     fi
@@ -187,13 +195,13 @@ done
 echo "-------------------------------------------"
 echo "⚙️ Configuring update methods..."
 CRON_SCHEDULE=""
-read -p "? Do you want to enable an automatic, scheduled sync? (y/n) " ACTIVATE_SCHEDULE
+read -p "$TEXT_PROMPT_SCHEDULE" ACTIVATE_SCHEDULE
 if [[ "$ACTIVATE_SCHEDULE" =~ ^[YyJj]$ ]]; then
-    read -p "? At what interval (in hours) should the sync run? (1-24) " SCHEDULE_HOURS
+    read -p "$TEXT_PROMPT_SCHEDULE_HOURS" SCHEDULE_HOURS
     CRON_SCHEDULE="  schedule:\n    - cron: '0 */${SCHEDULE_HOURS:-24} * * *'"
 fi
 SETUP_WEBHOOKS=false
-read -p "? Set up webhooks for real-time updates? (y/n) " ACTIVATE_WEBHOOKS
+read -p "$TEXT_PROMPT_WEBHOOKS" ACTIVATE_WEBHOOKS
 if [[ "$ACTIVATE_WEBHOOKS" =~ ^[YyJj]$ ]]; then
     SETUP_WEBHOOKS=true
 fi
