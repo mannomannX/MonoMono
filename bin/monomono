@@ -1,6 +1,6 @@
 #!/bin/bash
 # ==============================================================================
-# MONOMONO - HAUPTSKRIPT (v5.5 - Finaler Auth- & Reset-Fix)
+# MONOMONO - HAUPTSKRIPT (v5.6 - Finaler API-Fix für Codespaces)
 # ==============================================================================
 # Dieses Skript erstellt ein "Fusions-Repo" aus mehreren GitHub-Repositories.
 # Es führt ein robustes, einmaliges Setup für seine Abhängigkeiten durch und
@@ -29,7 +29,7 @@ case "$1" in
         else
             echo "ℹ Es war kein Benutzername zum Zurücksetzen gespeichert."
         fi
-        exit 0 # Dieser Befehl hat gefehlt
+        exit 0
         ;;
 esac
 
@@ -146,7 +146,6 @@ if $NEEDS_REAUTH; then
     echo "   Um fortzufahren, ist eine erneute Anmeldung mit erweiterten Rechten erforderlich."
     read -p "? Drücke ENTER, um den Anmelde-Prozess zu starten..."
     
-    # Leere die GITHUB_TOKEN Variable, um einen echten Browser-Login zu erzwingen
     unset GITHUB_TOKEN
     gh auth login --scopes repo,workflow
 fi
@@ -166,15 +165,26 @@ else
     echo "✔ Your username has been saved for the next run."
 fi
 
-# 4. PROJEKT-SETUP
+# 4. AUTHENTIFIZIERUNG MIT PERSONAL ACCESS TOKEN (PAT)
+echo "--------------------------------------------------------------------"
+echo "🔑 INFO: Um alle deine Repositories aufzulisten, wird ein Access Token benötigt."
+read -p "? Drücke ENTER, um die Token-Erstellung im Browser zu öffnen..."
+open_url "https://github.com/settings/tokens/new"
+echo "‼️ ANLEITUNG: Wähle im Browser die 'repo'-Scope aus, generiere den Token und kopiere ihn."
+echo "--------------------------------------------------------------------"
+PAT=""
+while [ -z "$PAT" ]; do read -s -p "👉 Bitte füge den kopierten Token hier ein und drücke ENTER: " PAT; echo; done
+
+
+# 5. PROJEKT-SETUP
 echo "-------------------------------------------"
-echo "🚀 Starting the wizard for '$GITHUB_USER'..."
+echo "🚀 Starte den Assistenten für '$GITHUB_USER'..."
 
-echo "1/5: Loading repositories..."
-REPOS_LIST=$(gh repo list "$GITHUB_USER" --limit 1000 --json "nameWithOwner" --jq '.[].nameWithOwner')
-if [ -z "$REPOS_LIST" ]; then echo "❌ No repositories found for '$GITHUB_USER'."; exit 1; fi
+echo "1/5: Lade Repositories via API..."
+REPOS_LIST=$(echo "$PAT" | gh api "user/repos?per_page=100" --jq '.[].full_name')
+if [ -z "$REPOS_LIST" ]; then echo "❌ Keine Repositories für '$GITHUB_USER' gefunden oder der Token ist ungültig."; exit 1; fi
 
-echo -e "2/5: Select the sub-repos to fuse:\n(Navigation: Arrow keys, Selection: TAB, Confirmation: ENTER)"
+echo -e "2/5: Wähle die zu fusionierenden Repos:\n(Navigation: Pfeiltasten, Auswahl: TAB, Bestätigen: ENTER)"
 SELECTED_REPOS=$(echo "$REPOS_LIST" | fzf --multi --height 40% --border --prompt="Select> ")
 if [ -z "$SELECTED_REPOS" ]; then echo "❌ Aborted: No repositories selected."; exit 1; fi
 SUB_REPOS=$(echo "$SELECTED_REPOS" | tr '\n' ',' | sed 's/,$//')
@@ -182,7 +192,7 @@ SUB_REPOS=$(echo "$SELECTED_REPOS" | tr '\n' ',' | sed 's/,$//')
 read -p "$TEXT_PROMPT_FUSION_NAME" FUSION_REPO_NAME
 if [ -z "$FUSION_REPO_NAME" ]; then echo "❌ Error: Repo name cannot be empty."; exit 1; fi
 
-# 5. UPDATE-OPTIONEN
+# 6. UPDATE-OPTIONEN
 echo "-------------------------------------------"
 echo "⚙️ Configuring update methods..."
 CRON_SCHEDULE=""
@@ -198,23 +208,15 @@ if [[ "$ACTIVATE_WEBHOOKS" =~ ^[YyJj]$ ]]; then
     SETUP_WEBHOOKS=true
 fi
 
-# 6. REPO ERSTELLEN & AUTHENTIFIZIEREN
+# 7. REPO ERSTELLEN & SECRET SETZEN
 echo "-> Creating repo '$FUSION_REPO_NAME'..."
 gh repo create "$GITHUB_USER/$FUSION_REPO_NAME" --public --description "Automatic fusion repo by MonoMono" >/dev/null || { echo "❌ Error creating the GitHub repo."; exit 1; }
 
-echo
-echo "--------------------------------------------------------------------"
-echo "🔑 INFO: ACCESS TOKEN REQUIRED"
-read -p "? Press ENTER to open the token creation page in your browser..."
-open_url "https://github.com/settings/tokens/new"
-echo "‼️ INSTRUCTIONS: In your browser, select the 'repo' scope, generate the token, and copy it."
-echo "--------------------------------------------------------------------"
-PAT=""
-while [ -z "$PAT" ]; do read -s -p "👉 Please paste the copied token here and press ENTER: " PAT; echo; done
+echo "-> Speichere den Token sicher als 'ACCESS_TOKEN' Secret im neuen Repo..."
 echo -n "$PAT" | gh secret set ACCESS_TOKEN --repo "$GITHUB_USER/$FUSION_REPO_NAME" || { echo "❌ Error setting the secret."; exit 1; }
-echo "✔ Secret successfully saved in the repository '$FUSION_REPO_NAME'."
+echo "✔ Secret erfolgreich im Repository '$FUSION_REPO_NAME' gespeichert."
 
-# 7. WORKFLOW ERSTELLEN & PUSHEN
+# 8. WORKFLOW ERSTELLEN & PUSHEN
 WORKFLOW_NAME="Fusion-Repo Erstellen & Aktualisieren"
 ON_TRIGGERS="on:\n  workflow_dispatch:\n"
 if [ -n "$CRON_SCHEDULE" ]; then ON_TRIGGERS+="$CRON_SCHEDULE\n"; fi
@@ -279,7 +281,7 @@ cd - >/dev/null
 rm -rf "$TEMP_DIR"
 echo "✔ Workflow file successfully pushed to GitHub."
 
-# 8. WEBHOOKS EINRICHTEN
+# 9. WEBHOOKS EINRICHTEN
 if $SETUP_WEBHOOKS; then
     echo "-> Setting up webhooks for the selected sub-repos..."
     DISPATCH_URL="https://api.github.com/repos/$GITHUB_USER/$FUSION_REPO_NAME/dispatches"
@@ -293,7 +295,7 @@ if $SETUP_WEBHOOKS; then
     done
 fi
 
-# 9. WORKFLOW STARTEN
+# 10. WORKFLOW STARTEN
 echo "-> Waiting for the workflow to be visible on GitHub..."
 WORKFLOW_FOUND=false
 for i in {1..5}; do
