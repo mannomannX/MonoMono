@@ -1,6 +1,6 @@
 #!/bin/bash
 # ==============================================================================
-# MONOMONO - HAUPTSKRIPT (v5.0 - mit Update-Optionen)
+# MONOMONO - HAUPTSKRIPT (v5.1 - mit Cross-Platform-Fix)
 # ==============================================================================
 # Dieses Skript erstellt ein "Fusions-Repo" aus mehreren GitHub-Repositories.
 # Es führt ein robustes, einmaliges Setup für seine Abhängigkeiten durch und
@@ -16,7 +16,7 @@ if [ -f "$(dirname "$0")/../lib/i18n.sh" ]; then
     source "$(dirname "$0")/../lib/i18n.sh"
     setup_language
 else
-    # Fallback-Texte, falls i18n.sh nicht gefunden wird
+    # Fallback-Texte auf Englisch, falls i18n.sh nicht gefunden wird
     TEXT_PROMPT_USERNAME="? Please enter your GitHub username: "
     TEXT_PROMPT_FUSION_NAME="? What should the new fusion repo be named? "
     TEXT_PROMPT_SCHEDULE="? Do you want to enable an automatic, scheduled sync? (y/n) "
@@ -42,33 +42,54 @@ open_url() {
 
 # --- HAUPTLOGIK ---
 
-# 1. PRÜFUNG DER VORAUSSETZUNGEN (wird übersprungen, wenn Tools vorhanden sind)
+# 1. PRÜFUNG DER VORAUSSETZUNGEN
 if ! command -v gh &>/dev/null || ! command -v fzf &>/dev/null; then
-    # Kompletter Setup-Prozess für neue Benutzer
+    # --- SETUP-MODUS ---
     echo "🔎 Checking system requirements..."
     echo "--------------------------------------------------------------------"
-    echo "⚠️  One or more required tools are not available in the terminal."
+    echo "⚠️  One or more required tools are not available."
     echo "   Starting the one-time installation wizard..."
     echo "--------------------------------------------------------------------"
     INSTALL_CMD=""
-    if command -v winget &>/dev/null; then INSTALL_CMD="winget"; fi
-    if [ -z "$INSTALL_CMD" ]; then echo "❌ Error: Could not find a suitable package manager (winget)."; exit 1; fi
-    read -p "? Required tools (GitHub CLI, fzf) are missing. Install them now? (y/n) " choice
-    if [[ "$choice" != "y" && "$choice" != "Y" ]]; then echo "❌ Aborted by user."; exit 1; fi
-    echo "-> Attempting to install 'GitHub CLI'..."
-    $INSTALL_CMD install --id GitHub.cli -e --accept-source-agreements
-    echo "-> Attempting to install 'fzf'..."
-    $INSTALL_CMD install --id junegunn.fzf -e --accept-source-agreements
+    OS_TYPE="$(uname -s)"
+
+    case "$OS_TYPE" in
+        Linux*)
+            if command -v apt-get &>/dev/null; then INSTALL_CMD="sudo apt-get install -y"; fi
+            GH_PKG_NAME="gh"; FZF_PKG_NAME="fzf"
+            ;;
+        Darwin*)
+            if command -v brew &>/dev/null; then INSTALL_CMD="brew install"; fi
+            GH_PKG_NAME="gh"; FZF_PKG_NAME="fzf"
+            ;;
+        CYGWIN*|MINGW*|MSYS*) # Windows
+            if command -v winget &>/dev/null; then INSTALL_CMD="winget"; fi
+            ;;
+    esac
+
+    if [ -z "$INSTALL_CMD" ]; then
+        echo "❌ Error: Could not find a suitable package manager for your system ($OS_TYPE)." >&2
+        exit 1
+    fi
+    
+    read -p "? Required tools are missing. Install them now? (y/n) " choice
+    if [[ ! "$choice" =~ ^[Yy]$ ]]; then echo "❌ Aborted by user."; exit 1; fi
+
+    # Installation durchführen
+    if ! command -v gh &>/dev/null; then
+        echo "-> Attempting to install 'GitHub CLI'..."
+        if [ "$INSTALL_CMD" == "winget" ]; then winget install --id GitHub.cli -e --accept-source-agreements; else $INSTALL_CMD $GH_PKG_NAME; fi
+    fi
+    if ! command -v fzf &>/dev/null; then
+        echo "-> Attempting to install 'fzf'..."
+        if [ "$INSTALL_CMD" == "winget" ]; then winget install --id junegunn.fzf -e --accept-source-agreements; else $INSTALL_CMD $FZF_PKG_NAME; fi
+    fi
+
     echo
     echo "--------------------------------------------------------------------"
     echo "✅ SETUP COMPLETE."
-    echo
-    echo "‼️  IMPORTANT NEXT STEP:"
-    echo "   1. Please close this terminal window and open a brand new one."
-    echo "   2. Run the script again inside the new terminal."
-    echo
-    echo "👉 If the script still tries to run the setup, please restart"
-    echo "   your computer. This will solve the issue."
+    echo "‼️  IMPORTANT: Please close this terminal and open a new one for the changes to take effect."
+    echo "   If issues persist, please restart your computer."
     echo "--------------------------------------------------------------------"
     exit 0
 fi
@@ -78,12 +99,8 @@ echo "✔ System ready. All tools found."
 
 # 2. GITHUB-LOGIN
 if ! gh auth status &>/dev/null; then
-    echo
     echo "--------------------------------------------------------------------"
-    echo "ℹ️ INFO: NEXT STEP - GITHUB LOGIN"
-    echo "The login process will now start using 'gh auth login'."
-    echo "👉 Follow the instructions in the terminal and in your browser."
-    echo "--------------------------------------------------------------------"
+    echo "ℹ️ INFO: GITHUB LOGIN REQUIRED"
     read -p "? Press ENTER to start the login process..."
     gh auth login
 fi
@@ -121,14 +138,14 @@ echo "-------------------------------------------"
 echo "⚙️ Configuring update methods..."
 CRON_SCHEDULE=""
 read -p "$TEXT_PROMPT_SCHEDULE" ACTIVATE_SCHEDULE
-if [[ "$ACTIVATE_SCHEDULE" == "j" || "$ACTIVATE_SCHEDULE" == "J" || "$ACTIVATE_SCHEDULE" == "y" || "$ACTIVATE_SCHEDULE" == "Y" ]]; then
+if [[ "$ACTIVATE_SCHEDULE" =~ ^[JjYy]$ ]]; then
     read -p "$TEXT_PROMPT_SCHEDULE_HOURS" SCHEDULE_HOURS
     CRON_SCHEDULE="  schedule:\n    - cron: '0 */${SCHEDULE_HOURS:-24} * * *'"
 fi
 
 SETUP_WEBHOOKS=false
 read -p "$TEXT_PROMPT_WEBHOOKS" ACTIVATE_WEBHOOKS
-if [[ "$ACTIVATE_WEBHOOKS" == "j" || "$ACTIVATE_WEBHOOKS" == "J" || "$ACTIVATE_WEBHOOKS" == "y" || "$ACTIVATE_WEBHOOKS" == "Y" ]]; then
+if [[ "$ACTIVATE_WEBHOOKS" =~ ^[JjYy]$ ]]; then
     SETUP_WEBHOOKS=true
 fi
 
@@ -136,7 +153,6 @@ fi
 echo "-> Creating repo '$FUSION_REPO_NAME'..."
 gh repo create "$GITHUB_USER/$FUSION_REPO_NAME" --public --description "Automatic fusion repo by MonoMono" >/dev/null || { echo "❌ Error creating the GitHub repo."; exit 1; }
 
-echo
 echo "--------------------------------------------------------------------"
 echo "🔑 INFO: ACCESS TOKEN REQUIRED"
 read -p "? Press ENTER to open the token creation page in your browser..."
@@ -219,10 +235,15 @@ if $SETUP_WEBHOOKS; then
     DISPATCH_URL="https://api.github.com/repos/$GITHUB_USER/$FUSION_REPO_NAME/dispatches"
     for repo in $(echo $SUB_REPOS | sed "s/,/ /g"); do
         echo "   - For repo: $repo"
+        # Erstelle den Body für den Webhook-Event
+        BODY="{\\\"event_type\\\": \\\"monomono-sync-event\\\"}"
         gh api --method POST "repos/$repo/hooks" \
-           -f "name=web" -f "active=true" -f "events[]=push" \
-           -f "config[url]=$DISPATCH_URL" -f "config[content_type]=json" \
-           -F "event_type=monomono-sync-event" \
+           -f "name=web" \
+           -f "active=true" \
+           -f "events[]=push" \
+           -f "config[url]=$DISPATCH_URL" \
+           -f "config[content_type]=json" \
+           -f "config[insecure_ssl]=0" \
            --silent || echo "     ❌ Error setting up webhook for $repo."
     done
 fi
