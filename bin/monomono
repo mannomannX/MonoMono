@@ -281,7 +281,8 @@ if $SETUP_WEBHOOKS; then
         echo "   - For repo: $repo"
         gh api --method POST "repos/$repo/hooks" \
            -f "name=web" -f "active=true" -f "events[]=push" \
-           -f "config[url]=$DISPATCH_URL" -f "config[content_type]=json" \
+           -f "config[url]=$DISPATCH_URL" \
+           -f "config[content_type]=json" \
            -F "event_type=monomono-sync-event" \
            --silent || echo "     ❌ Error setting up webhook for $repo."
     done
