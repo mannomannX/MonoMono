@@ -1,10 +1,9 @@
 #!/bin/bash
 # MonoMono Update-Skript v1.0
-
 REMOTE_URL=$(git config --get remote.origin.url 2>/dev/null)
 if [ -z "$REMOTE_URL" ]; then
-  echo "❌ Fehler: Dies scheint kein Git-Repository zu sein."
-  echo "   Bitte führe den Befehl im Ordner deines Fusions-Repos aus."
+  echo "❌ Fehler: Dies scheint kein Git-Repository zu sein." >&2
+  echo "   Bitte führe den Befehl im Ordner deines Fusions-Repos aus." >&2
   exit 1
 fi
 
