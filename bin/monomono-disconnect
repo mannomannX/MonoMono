@@ -1,18 +1,17 @@
 #!/bin/bash
 # MonoMono Disconnect-Skript v1.0
+source "$(dirname "$0")/../lib/i18n.sh"
+setup_language
 
 echo "MonoMono Disconnect Assistent"
 echo "--------------------------------"
-echo "Dieses Skript entfernt die Webhooks von deinen Sub-Repos."
-echo
 
-read -p "? Gib den Pfad zum Fusions-Repo ein (z.B. user/repo): " FUSION_REPO
+read -p "$TEXT_DISCONNECT_FUSION_REPO" FUSION_REPO
 if [ -z "$FUSION_REPO" ]; then echo "❌ Fehler: Eingabe darf nicht leer sein."; exit 1; fi
 
-read -p "? Gib die zu trennenden Sub-Repos ein (user/repo1,user/repo2,...): " SUB_REPOS
+read -p "$TEXT_DISCONNECT_SUB_REPOS" SUB_REPOS
 if [ -z "$SUB_REPOS" ]; then echo "❌ Fehler: Eingabe darf nicht leer sein."; exit 1; fi
 
-# Webhooks entfernen
 echo "-> Suche und entferne Webhooks in den Sub-Repos..."
 DISPATCH_URL="https://api.github.com/repos/$FUSION_REPO/dispatches"
 
@@ -32,8 +31,10 @@ for repo in $(echo $SUB_REPOS | sed "s/,/ /g"); do
 done
 
 echo
-read -p "? Soll auch das Fusions-Repo '$FUSION_REPO' auf GitHub gelöscht werden? (Dies kann nicht rückgängig gemacht werden!) (j/n) " DELETE_REPO
-if [[ "$DELETE_REPO" == "j" || "$DELETE_REPO" == "J" ]]; then
+# Dynamische Textausgabe für die Bestätigung
+printf -v confirm_prompt "$TEXT_DISCONNECT_DELETE_CONFIRM" "$FUSION_REPO"
+read -p "$confirm_prompt" DELETE_REPO
+if [[ "$DELETE_REPO" == "j" || "$DELETE_REPO" == "J" || "$DELETE_REPO" == "y" || "$DELETE_REPO" == "Y" ]]; then
     echo "-> Lösche Repository: $FUSION_REPO"
     gh repo delete "$FUSION_REPO" --yes
 fi

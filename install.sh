@@ -1,8 +1,10 @@
 #!/bin/bash
 # MonoMono Installationsskript v1.0
 
+# Finde den passenden Installationsort
 INSTALL_DIR="/usr/local/bin"
 
+# Prüfe, ob das Verzeichnis existiert und schreibbar ist
 if [ ! -d "$INSTALL_DIR" ] || [ ! -w "$INSTALL_DIR" ]; then
   echo "❌ Fehler: Installationsverzeichnis $INSTALL_DIR nicht gefunden oder keine Schreibrechte."
   echo "   Bitte führe das Skript mit 'sudo' aus oder erstelle das Verzeichnis manuell."

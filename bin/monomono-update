@@ -1,7 +1,6 @@
 #!/bin/bash
 # MonoMono Update-Skript v1.0
 
-# Ermittle das aktuelle GitHub-Repo aus dem Git-Remote
 REMOTE_URL=$(git config --get remote.origin.url 2>/dev/null)
 if [ -z "$REMOTE_URL" ]; then
   echo "❌ Fehler: Dies scheint kein Git-Repository zu sein."
