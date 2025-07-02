@@ -1,29 +1,44 @@
 #!/bin/bash
-# MonoMono Cleanup-Skript
+# MonoMono Disconnect-Skript
+# Entfernt Webhooks, die von MonoMono erstellt wurden.
 
-echo "MonoMono Cleanup-Assistent"
-echo "--------------------------"
+echo "MonoMono Disconnect Assistent"
+echo "--------------------------------"
+echo "Dieses Skript entfernt die Webhooks von deinen Sub-Repos,"
+echo "die auf ein Fusions-Repo zeigen."
+echo
+
 read -p "? Gib den Pfad zum Fusions-Repo ein (z.B. user/repo): " FUSION_REPO
-read -p "? Gib die zu bereinigenden Sub-Repos ein (user/repo1,user/repo2,...): " SUB_REPOS
+if [ -z "$FUSION_REPO" ]; then echo "❌ Fehler: Eingabe darf nicht leer sein."; exit 1; fi
+
+read -p "? Gib die zu trennenden Sub-Repos ein (user/repo1,user/repo2,...): " SUB_REPOS
+if [ -z "$SUB_REPOS" ]; then echo "❌ Fehler: Eingabe darf nicht leer sein."; exit 1; fi
 
 # Webhooks entfernen
 echo "-> Suche und entferne Webhooks in den Sub-Repos..."
 DISPATCH_URL="https://api.github.com/repos/$FUSION_REPO/dispatches"
+
 for repo in $(echo $SUB_REPOS | sed "s/,/ /g"); do
     echo "   - Prüfe Repo: $repo"
-    # Finde die ID des Webhooks, der auf unser Fusions-Repo zeigt, und lösche ihn
-    HOOK_IDS=$(gh api "repos/$repo/hooks" --jq ".[] | select(.config.url == \"$DISPATCH_URL\") | .id")
+    # Finde die ID des Webhooks, der auf unser Fusions-Repo zeigt
+    HOOK_IDS=$(gh api "repos/$repo/hooks" --jq ".[] | select(.config.url == \"$DISPATCH_URL\") | .id" 2>/dev/null)
+    
+    if [ -z "$HOOK_IDS" ]; then
+        echo "     ℹ️ Kein passender Webhook gefunden."
+        continue
+    fi
+
     for hook_id in $HOOK_IDS; do
         echo "     - Lösche Webhook mit ID: $hook_id"
-        gh api --method DELETE "repos/$repo/hooks/$hook_id" --silent
+        gh api --method DELETE "repos/$repo/hooks/$hook_id" --silent || echo "     ❌ Fehler beim Löschen."
     done
 done
 
-# Optional das Fusions-Repo löschen
-read -p "? Soll auch das Fusions-Repo '$FUSION_REPO' auf GitHub gelöscht werden? (j/n) " DELETE_REPO
+echo
+read -p "? Soll auch das Fusions-Repo '$FUSION_REPO' auf GitHub gelöscht werden? (Dies kann nicht rückgängig gemacht werden!) (j/n) " DELETE_REPO
 if [[ "$DELETE_REPO" == "j" || "$DELETE_REPO" == "J" ]]; then
     echo "-> Lösche Repository: $FUSION_REPO"
     gh repo delete "$FUSION_REPO" --yes
 fi
 
-echo "✅ Aufräumen abgeschlossen."
+echo "✅ Trennung abgeschlossen."
