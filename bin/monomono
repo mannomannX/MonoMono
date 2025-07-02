@@ -1,6 +1,6 @@
 #!/bin/bash
 # ==============================================================================
-# MONOMONO - HAUPTSKRIPT (v5.5 - Finaler Auth-Fix)
+# MONOMONO - HAUPTSKRIPT (v5.5 - Finaler Auth- & Reset-Fix)
 # ==============================================================================
 # Dieses Skript erstellt ein "Fusions-Repo" aus mehreren GitHub-Repositories.
 # Es führt ein robustes, einmaliges Setup für seine Abhängigkeiten durch und
@@ -29,7 +29,7 @@ case "$1" in
         else
             echo "ℹ Es war kein Benutzername zum Zurücksetzen gespeichert."
         fi
-        exit 0
+        exit 0 # Dieser Befehl hat gefehlt
         ;;
 esac
 
