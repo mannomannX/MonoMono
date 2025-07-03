@@ -1,11 +1,10 @@
 #!/bin/bash
 # ==============================================================================
-# MONOMONO - HAUPTSKRIPT (v5.15 - Finaler Workflow-Auth-Fix)
+# MONOMONO - HAUPTSKRIPT (v7.0 - mit Echtzeit-Webhook-Setup)
 # ==============================================================================
 # Dieses Skript erstellt ein "Fusions-Repo" aus mehreren GitHub-Repositories.
-# Es führt ein robustes, einmaliges Setup für seine Abhängigkeiten durch und
-# bietet detaillierte Anleitungen, um eine reibungslose Benutzererfahrung
-# zu gewährleisten.
+# Es bietet flexible Konfigurationsmöglichkeiten für Sichtbarkeit und alle
+# Update-Mechanismen, inklusive Echtzeit-Synchronisierung.
 # ==============================================================================
 
 # --- Konfiguration & Befehlslogik ---
@@ -33,18 +32,17 @@ case "$1" in
         ;;
 esac
 
-
 # Lade Sprach- und Hilfsdateien, falls vorhanden
 if [ -f "$(dirname "$0")/../lib/i18n.sh" ]; then
     source "$(dirname "$0")/../lib/i18n.sh"
     setup_language
 else
-    # Fallback-Texte auf Englisch, falls i18n.sh nicht gefunden wird
+    # Fallback-Texte auf Englisch
     TEXT_PROMPT_USERNAME="? Please enter your GitHub username: "
     TEXT_PROMPT_FUSION_NAME="? What should the new fusion repo be named? "
     TEXT_PROMPT_SCHEDULE="? Do you want to enable an automatic, scheduled sync? (y/n) "
     TEXT_PROMPT_SCHEDULE_HOURS="? At what interval (in hours) should the sync run? (1-24) "
-    TEXT_PROMPT_WEBHOOKS="? Set up webhooks for real-time updates? (y/n) "
+    TEXT_PROMPT_WEBHOOKS="? Set up real-time updates (via sub-repo workflows)? (y/n) "
     TEXT_ALL_DONE="✅ All done! Your fusion repo is now being populated."
 fi
 
@@ -59,9 +57,7 @@ if ! command -v gh &>/dev/null || ! command -v fzf &>/dev/null || ! command -v j
     echo "⚠️  One or more required tools are not available."
     echo "   Starting the one-time installation wizard..."
     echo "--------------------------------------------------------------------"
-    
     OS_TYPE="$(uname -s)"
-    
     read -p "? Required tools (gh, fzf, jq) are missing. Install them now? (y/n) " choice
     if [[ ! "$choice" =~ ^[YyJj]$ ]]; then echo "❌ Aborted by user."; exit 1; fi
 
@@ -87,15 +83,7 @@ if ! command -v gh &>/dev/null || ! command -v fzf &>/dev/null || ! command -v j
             if ! command -v fzf &>/dev/null; then brew install fzf; fi
             if ! command -v jq &>/dev/null; then brew install jq; fi
             ;;
-        CYGWIN*|MINGW*|MSYS*)
-            if ! command -v winget &>/dev/null; then echo "❌ Error: winget not found."; exit 1; fi
-            if ! command -v gh &>/dev/null; then winget install --id GitHub.cli -e --accept-source-agreements; fi
-            if ! command -v fzf &>/dev/null; then winget install --id junegunn.fzf -e --accept-source-agreements; fi
-            if ! command -v jq &>/dev/null; then winget install --id jqlang.jq -e --accept-source-agreements; fi
-            ;;
-        *)
-            echo "❌ Error: Unsupported operating system ($OS_TYPE)." >&2; exit 1
-            ;;
+        *) echo "❌ Error: Unsupported operating system ($OS_TYPE)." >&2; exit 1;;
     esac
     echo
     echo "--------------------------------------------------------------------"
@@ -111,7 +99,6 @@ echo "✔ System ready. All tools found."
 NEEDS_REAUTH=false
 if ! gh auth status &>/dev/null; then
     NEEDS_REAUTH=true
-    echo "ℹ️ INFO: GITHUB LOGIN REQUIRED"
 else
     TOKEN_STATUS=$(gh auth status -t 2>&1)
     if ! echo "$TOKEN_STATUS" | grep -q "repo" || ! echo "$TOKEN_STATUS" | grep -q "workflow"; then
@@ -121,44 +108,37 @@ else
 fi
 if $NEEDS_REAUTH; then
     echo "--------------------------------------------------------------------"
-    echo "   Um fortzufahren, ist eine erneute Anmeldung mit erweiterten Rechten erforderlich."
+    echo "ℹ️  Ein Login mit erweiterten Rechten ('repo', 'workflow') ist nötig."
     read -p "? Drücke ENTER, um den Anmelde-Prozess zu starten..."
     unset GITHUB_TOKEN
     gh auth login --scopes repo,workflow
 fi
 if ! gh auth status &>/dev/null; then echo "❌ Login fehlgeschlagen."; exit 1; fi
-echo "✔ Erfolgreich bei GitHub mit den korrekten Rechten angemeldet."
+echo "✔ Erfolgreich bei GitHub angemeldet."
 
 # 3. BENUTZERNAME LADEN/SPEICHERN
 if [ -f "$CONFIG_FILE" ]; then
     source "$CONFIG_FILE"
-    echo "ℹ Found saved username: $GITHUB_USER"
 else
     read -p "$TEXT_PROMPT_USERNAME" GITHUB_USER
-    if [ -z "$GITHUB_USER" ]; then echo "❌ Name cannot be empty."; exit 1; fi
     echo "GITHUB_USER=\"$GITHUB_USER\"" > "$CONFIG_FILE"
-    echo "✔ Your username has been saved for the next run."
 fi
+echo "ℹ Angemeldet als Benutzer: $GITHUB_USER"
 
 # 4. AUTHENTIFIZIERUNG MIT PERSONAL ACCESS TOKEN (PAT)
 echo "--------------------------------------------------------------------"
-echo "🔑 INFO: Um alle deine Repositories aufzulisten und zu erstellen,"
-echo "   wird ein persönlicher Zugriffstoken (PAT) mit 'repo' UND 'workflow' Rechten benötigt."
-echo "‼️  AKTION ERFORDERLICH: Bitte öffne die URL https://github.com/settings/tokens/new"
+echo "🔑 INFO: Ein persönlicher Zugriffstoken (PAT) wird benötigt."
+echo "‼️  AKTION ERFORDERLICH: Öffne https://github.com/settings/tokens/new"
 echo "   Anleitung: Wähle die Scopes 'repo' UND 'workflow' aus, generiere den Token und kopiere ihn."
 echo "--------------------------------------------------------------------"
 PAT=""
 while [ -z "$PAT" ]; do
-    read -s -p "👉 Bitte füge den kopierten Token hier ein und drücke ENTER: " PAT
-    echo
+    read -s -p "👉 Bitte füge den kopierten Token hier ein und drücke ENTER: " PAT; echo
 done
-
-# Token-Validierung mit cURL
 echo "-> Überprüfe den Access Token..."
 HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: token $PAT" https://api.github.com/user)
 if [ "$HTTP_STATUS" -ne 200 ]; then
-    echo "❌ FEHLER: Der eingegebene Token ist ungültig oder hat nicht die nötigen Rechte (HTTP-Status: $HTTP_STATUS)." >&2
-    exit 1
+    echo "❌ FEHLER: Der Token ist ungültig (HTTP-Status: $HTTP_STATUS)." >&2; exit 1
 fi
 VALIDATED_USER=$(curl -s -H "Authorization: token $PAT" https://api.github.com/user | jq -r '.login')
 echo "✔ Access Token ist gültig für Benutzer '$VALIDATED_USER'."
@@ -166,11 +146,10 @@ export GH_TOKEN=$PAT
 
 # 5. PROJEKT-SETUP
 echo "-------------------------------------------"
-echo "🚀 Starte den Assistenten für '$GITHUB_USER'..."
-
+echo "🚀 Starte den Assistenten..."
 echo "1/5: Lade Repositories via API..."
 REPOS_LIST=$(curl -s -H "Authorization: token $PAT" "https://api.github.com/user/repos?type=owner&per_page=100" | jq -r '.[].full_name')
-if [ -z "$REPOS_LIST" ]; then echo "❌ Keine Repositories für '$GITHUB_USER' gefunden."; exit 1; fi
+if [ -z "$REPOS_LIST" ]; then echo "❌ Keine Repositories gefunden."; exit 1; fi
 
 echo -e "2/5: Wähle die zu fusionierenden Repos:\n(Navigation: Pfeiltasten, Auswahl: TAB, Bestätigen: ENTER)"
 SELECTED_REPOS=$(echo "$REPOS_LIST" | fzf --multi --height 40% --border --prompt="Select> ")
@@ -178,25 +157,30 @@ if [ -z "$SELECTED_REPOS" ]; then echo "❌ Aborted: No repositories selected.";
 SUB_REPOS=$(echo "$SELECTED_REPOS" | tr '\n' ',' | sed 's/,$//')
 
 while true; do
-    read -p "$TEXT_PROMPT_FUSION_NAME (Keine Leerzeichen erlaubt): " FUSION_REPO_NAME
+    read -p "? 3/5: Wie soll das neue Fusions-Repo heißen? (Keine Leerzeichen): " FUSION_REPO_NAME
     if [[ "$FUSION_REPO_NAME" =~ \  ]]; then
-        echo "❌ Fehler: Der Name darf keine Leerzeichen enthalten. Bitte versuche es erneut."
-    elif [ -z "$FUSION_REPO_NAME" ]; then
-        echo "❌ Fehler: Der Name darf nicht leer sein."
+        echo "❌ Fehler: Der Name darf keine Leerzeichen enthalten."
     else
         break
     fi
 done
 
+VISIBILITY_FLAG="--public"
+read -p "? 4/5: Soll das Repository 'privat' sein? (j/n) " IS_PRIVATE
+if [[ "$IS_PRIVATE" =~ ^[YyJj]$ ]]; then
+    VISIBILITY_FLAG="--private"
+fi
+
 # 6. UPDATE-OPTIONEN
 echo "-------------------------------------------"
-echo "⚙️ Configuring update methods..."
+echo "⚙️ 5/5: Konfiguriere die Update-Methoden..."
 CRON_SCHEDULE=""
 read -p "$TEXT_PROMPT_SCHEDULE" ACTIVATE_SCHEDULE
 if [[ "$ACTIVATE_SCHEDULE" =~ ^[YyJj]$ ]]; then
     read -p "$TEXT_PROMPT_SCHEDULE_HOURS" SCHEDULE_HOURS
     CRON_SCHEDULE="  schedule:\n    - cron: '0 */${SCHEDULE_HOURS:-24} * * *'"
 fi
+
 SETUP_WEBHOOKS=false
 read -p "$TEXT_PROMPT_WEBHOOKS" ACTIVATE_WEBHOOKS
 if [[ "$ACTIVATE_WEBHOOKS" =~ ^[YyJj]$ ]]; then
@@ -204,11 +188,10 @@ if [[ "$ACTIVATE_WEBHOOKS" =~ ^[YyJj]$ ]]; then
 fi
 
 # 7. REPO ERSTELLEN & SECRET SETZEN
-echo "-> Creating repo '$FUSION_REPO_NAME'..."
-gh repo create "$GITHUB_USER/$FUSION_REPO_NAME" --public --description "Automatic fusion repo by MonoMono" >/dev/null || { echo "❌ Error creating the GitHub repo."; exit 1; }
-echo "-> Speichere den Token sicher als 'ACCESS_TOKEN' Secret im neuen Repo..."
+echo "-> Erstelle Repo '$FUSION_REPO_NAME' und richte den Workflow ein..."
+gh repo create "$GITHUB_USER/$FUSION_REPO_NAME" "$VISIBILITY_FLAG" --description "Automatic fusion repo by MonoMono" >/dev/null || { echo "❌ Error creating repo."; exit 1; }
 echo -n "$PAT" | gh secret set ACCESS_TOKEN --repo "$GITHUB_USER/$FUSION_REPO_NAME" || { echo "❌ Fehler beim Setzen des Secrets."; exit 1; }
-echo "✔ Secret erfolgreich im Repository '$FUSION_REPO_NAME' gespeichert."
+echo "✔ Secret erfolgreich im Repository gespeichert."
 
 # 8. WORKFLOW ERSTELLEN & PUSHEN
 WORKFLOW_NAME="Fusion-Repo Erstellen & Aktualisieren"
@@ -235,37 +218,33 @@ jobs:
           token: \${{ secrets.ACCESS_TOKEN }}
       - name: Clone sub-repos
         run: |
+          git config --global url."https://x-access-token:\${{ secrets.ACCESS_TOKEN }}@github.com/".insteadOf "https://github.com/"
           REPOS_TO_SYNC=\${{ inputs.repos || '$SUB_REPOS' }}
           for repo in \$(echo "\$REPOS_TO_SYNC" | sed 's/,/ /g'); do
             folder_name=\$(basename \$repo)
             echo "-> Cloning \$repo into \$folder_name..."
-            git clone --depth 1 https://\${{ secrets.ACCESS_TOKEN }}@github.com/\$repo.git \$folder_name && rm -rf \$folder_name/.git
+            git clone --depth 1 https://github.com/\$repo.git \$folder_name && rm -rf \$folder_name/.git
           done
-      - name: Create README
+      - name: Create README and commit
         run: |
-          REPOS_TO_SYNC=\${{ inputs.repos || '$SUB_REPOS' }}
           echo "# Fusion-Repo" > README.md
           echo "" >> README.md
           echo "This repository is an automatic fusion of the following projects:" >> README.md
-          for repo in \$(echo "\$REPOS_TO_SYNC" | sed 's/,/ /g'); do
+          for repo in \$(echo "\${{ inputs.repos || '$SUB_REPOS' }}" | sed 's/,/ /g'); do
             echo "- [\$repo](https://github.com/\$repo)" >> README.md
           done
           echo "" >> README.md
           echo "Last update: \$(date)" >> README.md
-      - name: Commit and push changes
-        run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
           git add .
           if ! git diff-index --quiet HEAD; then
             git commit -m "Fusion-Repo: Sync sub-repos"
-            git pull --rebase
             git push
           else
             echo "No new changes found in sub-repos."
           fi
 EOM
-echo "-> Setting up a temporary local clone to push the workflow..."
 TEMP_DIR=$(mktemp -d)
 cd "$TEMP_DIR" || exit 1
 git clone "https://x-access-token:$PAT@github.com/$GITHUB_USER/$FUSION_REPO_NAME.git" . >/dev/null 2>&1 || { echo "❌ Error cloning repo."; rm -rf "$TEMP_DIR"; exit 1; }
@@ -280,32 +259,59 @@ cd - >/dev/null
 rm -rf "$TEMP_DIR"
 echo "✔ Workflow file successfully pushed to GitHub."
 
-# 9. WEBHOOKS EINRICHTEN
+# 9. ECHTZEIT-SYNC EINRICHTEN (TRIGGER-WORKFLOWS)
 if $SETUP_WEBHOOKS; then
-    echo "-> Setting up webhooks for the selected sub-repos..."
-    DISPATCH_URL="https://api.github.com/repos/$GITHUB_USER/$FUSION_REPO_NAME/dispatches"
+    echo "-> Richte Echtzeit-Synchronisierung für die Sub-Repos ein..."
+    
+    TRIGGER_WORKFLOW_FILE_PATH="$(dirname "$0")/../monomono-trigger.yml"
+    if [ ! -f "$TRIGGER_WORKFLOW_FILE_PATH" ]; then
+        echo "❌ Fehler: Die Trigger-Datei 'monomono-trigger.yml' wurde nicht im Projekt-Root gefunden." >&2
+        exit 1
+    fi
+
     for repo in $(echo $SUB_REPOS | sed "s/,/ /g"); do
-        echo "   - For repo: $repo"
-        gh api --method POST "repos/$repo/hooks" \
-           -f "name=web" -F "active=true" -f "events[]=push" \
-           -f "config[url]=$DISPATCH_URL" -f "config[content_type]=json" \
-           -F "event_type=monomono-sync-event" --silent || echo "     ❌ Error setting up webhook for $repo."
+        echo "   - Konfiguriere Sub-Repo: $repo"
+        
+        FUSION_REPO_FULL_NAME="$GITHUB_USER/$FUSION_REPO_NAME"
+        echo "     - Setze Secrets im Sub-Repo..."
+        echo -n "$FUSION_REPO_FULL_NAME" | gh secret set MONOMONO_FUSION_REPO --repo "$repo"
+        echo -n "$PAT" | gh secret set MONOMONO_PAT --repo "$repo"
+
+        echo "     - Pushe Trigger-Workflow zum Sub-Repo..."
+        TEMP_SUB_DIR=$(mktemp -d)
+        git clone "https://x-access-token:$PAT@github.com/$repo.git" "$TEMP_SUB_DIR" >/dev/null 2>&1
+        
+        mkdir -p "$TEMP_SUB_DIR/.github/workflows"
+        cp "$TRIGGER_WORKFLOW_FILE_PATH" "$TEMP_SUB_DIR/.github/workflows/monomono-trigger.yml"
+        
+        cd "$TEMP_SUB_DIR" || exit
+        git config user.name "MonoMono Script"
+        git add .github/workflows/monomono-trigger.yml
+        if ! git diff-index --quiet HEAD; then
+            git commit -m "feat: Add MonoMono sync trigger"
+            git push >/dev/null 2>&1
+        else
+            echo "     - Trigger-Workflow ist bereits aktuell."
+        fi
+        cd - >/dev/null
+        rm -rf "$TEMP_SUB_DIR"
     done
 fi
 
+
 # 10. WORKFLOW STARTEN
-echo "-> Waiting for the workflow to be visible on GitHub..."
+echo "-> Warte, bis der Workflow auf GitHub sichtbar ist..."
 WORKFLOW_FOUND=false
 for i in {1..5}; do
   if gh workflow list --repo "$GITHUB_USER/$FUSION_REPO_NAME" 2>/dev/null | grep -q "$WORKFLOW_NAME"; then
-    echo "✔ Workflow found."; WORKFLOW_FOUND=true; break;
+    echo "✔ Workflow gefunden."; WORKFLOW_FOUND=true; break;
   fi
-  if [ $i -lt 5 ]; then echo "   - Not found yet, trying again in 2 seconds..."; sleep 2; fi
+  if [ $i -lt 5 ]; then echo "   - Noch nicht gefunden, versuche es in 2 Sekunden erneut..."; sleep 2; fi
 done
 if ! $WORKFLOW_FOUND; then echo "❌ Error: Workflow not found after 10 seconds."; exit 1; fi
-echo "-> Starting the first workflow run..."
+echo "-> Starte den ersten Lauf des Workflows..."
 gh workflow run sync.yml --repo "$GITHUB_USER/$FUSION_REPO_NAME" || { echo "❌ Error starting the workflow."; exit 1; }
 
 echo
 echo "$TEXT_ALL_DONE"
-echo "👀 Track the progress here: https://github.com/$GITHUB_USER/$FUSION_REPO_NAME/actions"
+echo "👀 Verfolge den Fortschritt hier: https://github.com/$GITHUB_USER/$FUSION_REPO_NAME/actions"

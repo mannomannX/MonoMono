@@ -1,0 +1,25 @@
+# MonoMono Trigger Workflow
+# Dieser Workflow wird bei einem Push auf das Sub-Repo ausgeführt und
+# sendet ein "repository_dispatch"-Event an das Fusions-Repo.
+
+name: MonoMono Sync Trigger
+on:
+  push:
+    branches:
+      - main # oder dein Haupt-Branch
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send dispatch to fusion repo
+        env:
+          FUSION_REPO: ${{ secrets.MONOMONO_FUSION_REPO }}
+          PAT: ${{ secrets.MONOMONO_PAT }}
+        run: |
+          if [ -z "$FUSION_REPO" ] || [ -z "$PAT" ]; then
+            echo "Fehler: Secrets MONOMONO_FUSION_REPO oder MONOMONO_PAT sind nicht im Sub-Repo gesetzt."
+            exit 1
+          fi
+          
+          echo "Sending dispatch to $FUSION_REPO"
+          gh api --method POST "repos/$FUSION_REPO/dispatches" -f "event_type=monomono-sync-event" --header "Authorization: token $PAT"
