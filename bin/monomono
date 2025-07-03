@@ -199,25 +199,25 @@ jobs:
     permissions:
       contents: write
     steps:
-      # ==============================================================================
-      # ✨ HIER IST DER FIX ✨
-      # Wir geben dem Checkout-Schritt explizit unseren mächtigen Token.
-      # Das löst das 403-Problem bei Webhook-Triggern.
-      # ==============================================================================
       - name: Checkout fusion repo
         uses: actions/checkout@v4
         with:
           token: \${{ secrets.ACCESS_TOKEN }}
 
+      # ==============================================================================
+      # ✨ HIER IST DER FIX ✨
+      # Wir fügen den Token wieder zur `git clone`-URL hinzu, um den Klon der
+      # Sub-Repos explizit zu authentifizieren.
+      # ==============================================================================
       - name: Clone sub-repos
         run: |
           REPOS_TO_SYNC=\${{ inputs.repos || '$SUB_REPOS' }}
           for repo in \$(echo "\$REPOS_TO_SYNC" | sed 's/,/ /g'); do
             folder_name=\$(basename \$repo)
             echo "-> Cloning \$repo into \$folder_name..."
-            # Wir brauchen hier den Token nicht mehr in der URL, da der ganze Job authentifiziert ist
-            git clone --depth 1 https://github.com/\$repo.git \$folder_name && rm -rf \$folder_name/.git
+            git clone --depth 1 https://\${{ secrets.ACCESS_TOKEN }}@github.com/\$repo.git \$folder_name && rm -rf \$folder_name/.git
           done
+
       - name: Create README
         run: |
           REPOS_TO_SYNC=\${{ inputs.repos || '$SUB_REPOS' }}
