@@ -1,13 +1,14 @@
 #!/bin/bash
-# MonoMono Update-Skript v1.0
-REMOTE_URL=$(git config --get remote.origin.url 2>/dev/null)
-if [ -z "$REMOTE_URL" ]; then
-  echo "❌ Fehler: Dies scheint kein Git-Repository zu sein." >&2
-  echo "   Bitte führe den Befehl im Ordner deines Fusions-Repos aus." >&2
+# MonoMono Update-Skript v1.1
+
+# Prüfe, ob ein Repository als Argument übergeben wurde
+if [ -z "$1" ]; then
+  echo "❌ Fehler: Du musst den Pfad zum Fusions-Repo angeben."
+  echo "   Beispiel: monomono-update dein-name/dein-fusions-repo"
   exit 1
 fi
 
-REPO_PATH=$(echo "$REMOTE_URL" | sed -E 's/.*github.com[:/](.*)\.git/\1/')
+REPO_PATH=$1
 
 echo "ℹ️ Starte den Update-Workflow für das Repo: $REPO_PATH"
 gh workflow run sync.yml --repo "$REPO_PATH" || { echo "❌ Fehler beim Starten des Workflows."; exit 1; }
