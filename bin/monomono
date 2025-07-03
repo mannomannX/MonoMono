@@ -263,15 +263,38 @@ rm -rf "$TEMP_DIR"
 echo "✔ Workflow file successfully pushed to GitHub."
 
 # 8. ECHTZEIT-SYNC EINRICHTEN (TRIGGER-WORKFLOWS)
-if $SETUP_WEBHOOKS; then
+if [[ "$SETUP_WEBHOOKS" = true ]]; then
     echo "-> Richte Echtzeit-Synchronisierung für die Sub-Repos ein..."
-    
-    TRIGGER_WORKFLOW_FILE_PATH="$PROJECT_ROOT/monomono-trigger.yml"
-    if [ ! -f "$TRIGGER_WORKFLOW_FILE_PATH" ]; then
-        echo "❌ Fehler: Die Trigger-Datei '$TRIGGER_WORKFLOW_FILE_PATH' wurde nicht gefunden." >&2
-        echo "   Bitte stelle sicher, dass sie im Hauptverzeichnis des MonoMono-Projekts liegt." >&2
-        exit 1
-    fi
+
+    # ==============================================================================
+    # ✨ HIER IST DER FINALE FIX ✨
+    # Der Inhalt der Trigger-Datei wird direkt hier im Skript definiert.
+    # Kein Suchen im Dateisystem mehr nötig.
+    # ==============================================================================
+    read -r -d '' TRIGGER_WORKFLOW_CONTENT << EOM
+# MonoMono Trigger Workflow
+name: MonoMono Sync Trigger
+on:
+  push:
+    branches:
+      - main
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send dispatch to fusion repo
+        env:
+          FUSION_REPO: \${{ secrets.MONOMONO_FUSION_REPO }}
+          PAT: \${{ secrets.MONOMONO_PAT }}
+        run: |
+          if [ -z "\$FUSION_REPO" ] || [ -z "\$PAT" ]; then
+            echo "Fehler: Secrets MONOMONO_FUSION_REPO oder MONOMONO_PAT sind nicht im Sub-Repo gesetzt."
+            exit 1
+          fi
+          
+          echo "Sending dispatch to \$FUSION_REPO"
+          gh api --method POST "repos/\$FUSION_REPO/dispatches" -f "event_type=monomono-sync-event" --header "Authorization: token \$PAT"
+EOM
 
     for repo in $(echo $SUB_REPOS | sed "s/,/ /g"); do
         echo "   - Konfiguriere Sub-Repo: $repo"
@@ -286,14 +309,16 @@ if $SETUP_WEBHOOKS; then
         git clone "https://x-access-token:$PAT@github.com/$repo.git" "$TEMP_SUB_DIR" >/dev/null 2>&1
         
         mkdir -p "$TEMP_SUB_DIR/.github/workflows"
-        cp "$TRIGGER_WORKFLOW_FILE_PATH" "$TEMP_SUB_DIR/.github/workflows/monomono-trigger.yml"
+        # Schreibe den Inhalt der Variable in die Datei
+        echo "$TRIGGER_WORKFLOW_CONTENT" > "$TEMP_SUB_DIR/.github/workflows/monomono-trigger.yml"
         
         cd "$TEMP_SUB_DIR" || exit
         git config user.name "MonoMono Script"
         git add .github/workflows/monomono-trigger.yml
         if ! git diff-index --quiet HEAD; then
             git commit -m "feat: Add MonoMono sync trigger"
-            git push >/dev/null 2>&1
+            # Wir leiten die Ausgabe nicht mehr um, um Fehler zu sehen
+            git push
         else
             echo "     - Trigger-Workflow ist bereits aktuell."
         fi
