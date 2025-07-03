@@ -13,14 +13,15 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 # Der Pfad zum Projekt-Root, eine Ebene über dem bin-Ordner
 PROJECT_ROOT="$SCRIPT_DIR/.."
 
-
 # Verarbeite Befehle wie --help oder --reset
 case "$1" in
     --help|-h)
         echo "MonoMono Assistent - Ein Werkzeug zum Erstellen von Fusions-Repos."
         echo
-        echo "Verwendung: ./bin/monomono"
-        echo "           ./bin/monomono --reset"
+        echo "Verwendung:"
+        echo "  ./bin/monomono           - Startet den interaktiven Assistenten."
+        echo "  ./bin/monomono --reset   - Löscht den gespeicherten Benutzernamen."
+        echo "  ./bin/monomono --help    - Zeigt diese Hilfe an."
         exit 0
         ;;
     --reset)
