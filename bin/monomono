@@ -186,17 +186,9 @@ echo "✔ Secret erfolgreich im Repository '$FUSION_REPO_NAME' gespeichert."
 
 # 8. WORKFLOW ERSTELLEN & PUSHEN
 WORKFLOW_NAME="Fusion-Repo Erstellen & Aktualisieren"
-# ==============================================================================
-# ✨ HIER IST DER FIX FÜR DIE YAML-SYNTAX ✨
-# Wir bauen den `on:`-Block jetzt zeilenweise und mit korrekter Einrückung auf.
-# ==============================================================================
-ON_TRIGGERS="on:\n  workflow_dispatch:" # Startet immer mit manuellem Trigger
-if [ -n "$CRON_SCHEDULE" ]; then
-    ON_TRIGGERS+="\n$CRON_SCHEDULE"
-fi
-if $SETUP_WEBHOOKS; then
-    ON_TRIGGERS+="\n  repository_dispatch:\n    types: [monomono-sync-event]"
-fi
+ON_TRIGGERS="on:\n  workflow_dispatch:\n"
+if [ -n "$CRON_SCHEDULE" ]; then ON_TRIGGERS+="$CRON_SCHEDULE\n"; fi
+if $SETUP_WEBHOOKS; then ON_TRIGGERS+="  repository_dispatch:\n    types: [monomono-sync-event]\n"; fi
 
 read -r -d '' WORKFLOW_CONTENT << EOM
 name: '$WORKFLOW_NAME'
@@ -207,15 +199,24 @@ jobs:
     permissions:
       contents: write
     steps:
+      # ==============================================================================
+      # ✨ HIER IST DER FIX ✨
+      # Wir geben dem Checkout-Schritt explizit unseren mächtigen Token.
+      # Das löst das 403-Problem bei Webhook-Triggern.
+      # ==============================================================================
       - name: Checkout fusion repo
         uses: actions/checkout@v4
+        with:
+          token: \${{ secrets.ACCESS_TOKEN }}
+
       - name: Clone sub-repos
         run: |
           REPOS_TO_SYNC=\${{ inputs.repos || '$SUB_REPOS' }}
           for repo in \$(echo "\$REPOS_TO_SYNC" | sed 's/,/ /g'); do
             folder_name=\$(basename \$repo)
             echo "-> Cloning \$repo into \$folder_name..."
-            git clone --depth 1 https://\${{ secrets.ACCESS_TOKEN }}@github.com/\$repo.git \$folder_name && rm -rf \$folder_name/.git
+            # Wir brauchen hier den Token nicht mehr in der URL, da der ganze Job authentifiziert ist
+            git clone --depth 1 https://github.com/\$repo.git \$folder_name && rm -rf \$folder_name/.git
           done
       - name: Create README
         run: |
