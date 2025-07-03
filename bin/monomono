@@ -1,6 +1,6 @@
 #!/bin/bash
 # ==============================================================================
-# MONOMONO - HAUPTSKRIPT (v8.1 - Self-Contained & Final)
+# MONOMONO - HAUPTSKRIPT (v8.2 - Self-Contained & Final)
 # ==============================================================================
 # Dieses Skript erstellt ein "Fusions-Repo" aus mehreren GitHub-Repositories.
 # Es ist für den direkten Gebrauch aus dem Projektordner konzipiert.
@@ -13,14 +13,15 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 # Der Pfad zum Projekt-Root, eine Ebene über dem bin-Ordner
 PROJECT_ROOT="$SCRIPT_DIR/.."
 
+
 # Verarbeite Befehle wie --help oder --reset
 case "$1" in
     --help|-h)
         echo "MonoMono Assistent - Ein Werkzeug zum Erstellen von Fusions-Repos."
         echo
         echo "Verwendung:"
-        echo "  ./bin/monomono           - Startet den interaktiven Assistenten."
-        echo "  ./bin/monomono --reset   - Löscht den gespeicherten Benutzernamen."
+        echo "  ./bin/monomono           - Startet den interaktiven Assistenten (aus dem Projekt-Root)."
+        echo "  ./bin/monomono --reset   - Löscht den gespeicherten GitHub-Benutzernamen."
         echo "  ./bin/monomono --help    - Zeigt diese Hilfe an."
         exit 0
         ;;
