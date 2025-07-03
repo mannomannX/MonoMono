@@ -259,13 +259,20 @@ cd - >/dev/null
 rm -rf "$TEMP_DIR"
 echo "✔ Workflow file successfully pushed to GitHub."
 
-# 9. ECHTZEIT-SYNC EINRICHTEN (TRIGGER-WORKFLOWS)
+# 9. ECHTZEIT-SYNC EINRICHTEN (WEBHOOKS & TRIGGER-WORKFLOWS)
 if $SETUP_WEBHOOKS; then
     echo "-> Richte Echtzeit-Synchronisierung für die Sub-Repos ein..."
     
-    TRIGGER_WORKFLOW_FILE_PATH="$(dirname "$0")/../monomono-trigger.yml"
+    # ==============================================================================
+    # ✨ HIER IST DER FIX ✨
+    # Wir verwenden jetzt den absoluten, zuverlässigen Pfad zum Heimatordner.
+    # ==============================================================================
+    MONOMONO_HOME="$HOME/.monomono"
+    TRIGGER_WORKFLOW_FILE_PATH="$MONOMONO_HOME/monomono-trigger.yml"
+    
     if [ ! -f "$TRIGGER_WORKFLOW_FILE_PATH" ]; then
-        echo "❌ Fehler: Die Trigger-Datei 'monomono-trigger.yml' wurde nicht im Projekt-Root gefunden." >&2
+        echo "❌ Fehler: Die Trigger-Datei '$TRIGGER_WORKFLOW_FILE_PATH' wurde nicht gefunden." >&2
+        echo "   Bitte stelle sicher, dass die Installation korrekt war." >&2
         exit 1
     fi
 
