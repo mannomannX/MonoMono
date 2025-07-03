@@ -1,6 +1,6 @@
 #!/bin/bash
 # ==============================================================================
-# MONOMONO - HAUPTSKRIPT (v5.12 - Finaler cURL-Fix)
+# MONOMONO - HAUPTSKRIPT (v5.13 - Finaler Rechte-Fix)
 # ==============================================================================
 # Dieses Skript erstellt ein "Fusions-Repo" aus mehreren GitHub-Repositories.
 # Es führt ein robustes, einmaliges Setup für seine Abhängigkeiten durch und
@@ -32,6 +32,7 @@ case "$1" in
         exit 0
         ;;
 esac
+
 
 # Lade Sprach- und Hilfsdateien, falls vorhanden
 if [ -f "$(dirname "$0")/../lib/i18n.sh" ]; then
@@ -142,9 +143,9 @@ fi
 # 4. AUTHENTIFIZIERUNG MIT PERSONAL ACCESS TOKEN (PAT)
 echo "--------------------------------------------------------------------"
 echo "🔑 INFO: Um alle deine Repositories aufzulisten und zu erstellen,"
-echo "   wird ein persönlicher Zugriffstoken (PAT) mit 'repo'-Rechten benötigt."
+echo "   wird ein persönlicher Zugriffstoken (PAT) benötigt."
 echo "‼️  AKTION ERFORDERLICH: Bitte öffne die URL https://github.com/settings/tokens/new"
-echo "   Anleitung: Wähle die 'repo'-Scope, generiere den Token und kopiere ihn."
+echo "   Anleitung: Wähle die Scopes 'repo' UND 'workflow' aus, generiere den Token und kopiere ihn."
 echo "--------------------------------------------------------------------"
 PAT=""
 while [ -z "$PAT" ]; do
@@ -260,7 +261,8 @@ EOM
 echo "-> Setting up a temporary local clone to push the workflow..."
 TEMP_DIR=$(mktemp -d)
 cd "$TEMP_DIR" || exit 1
-gh repo clone "$GITHUB_USER/$FUSION_REPO_NAME" . >/dev/null 2>&1 || { echo "❌ Error cloning the new repo."; rm -rf "$TEMP_DIR"; exit 1; }
+# Authentifizierter Klon für den Fall, dass das Repo doch privat erstellt wurde
+git clone "https://x-access-token:$PAT@github.com/$GITHUB_USER/$FUSION_REPO_NAME.git" . >/dev/null 2>&1 || { echo "❌ Error cloning the new repo."; rm -rf "$TEMP_DIR"; exit 1; }
 mkdir -p .github/workflows
 echo "$WORKFLOW_CONTENT" > .github/workflows/sync.yml
 git config user.name "MonoMono Script"
@@ -281,8 +283,7 @@ if $SETUP_WEBHOOKS; then
         echo "   - For repo: $repo"
         gh api --method POST "repos/$repo/hooks" \
            -f "name=web" -f "active=true" -f "events[]=push" \
-           -f "config[url]=$DISPATCH_URL" \
-           -f "config[content_type]=json" \
+           -f "config[url]=$DISPATCH_URL" -f "config[content_type]=json" \
            -F "event_type=monomono-sync-event" \
            --silent || echo "     ❌ Error setting up webhook for $repo."
     done
