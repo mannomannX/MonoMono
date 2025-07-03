@@ -22,9 +22,6 @@ fi
 
 echo "Installiere MonoMono nach $INSTALL_DIR und richte den Heimatordner in $MONOMONO_HOME ein..."
 
-# Speichere den Pfad zum Projekt-Root in einer Konfigurationsdatei
-echo "MONOMONO_PROJECT_ROOT='$SCRIPT_DIR'" > "$MONOMONO_HOME/config"
-
 # Kopiere die Hilfsdateien in den Heimatordner
 cp "$SCRIPT_DIR/lib/i18n.sh" "$MONOMONO_HOME/lib/i18n.sh"
 cp "$SCRIPT_DIR/monomono-trigger.yml" "$MONOMONO_HOME/monomono-trigger.yml"
@@ -35,7 +32,8 @@ for cmd in monomono monomono-update monomono-disconnect; do
         echo "❌ Fehler: Die Skript-Datei '$SCRIPT_DIR/bin/$cmd' wurde nicht gefunden." >&2
         exit 1
     fi
-    cp "$SCRIPT_DIR/bin/$cmd" "$INSTALL_DIR/$cmd"
+    # Ersetze den Platzhalter für den Heimatordner im Skript
+    sed "s|__MONOMONO_HOME__|$MONOMONO_HOME|g" "$SCRIPT_DIR/bin/$cmd" > "$INSTALL_DIR/$cmd"
     chmod +x "$INSTALL_DIR/$cmd"
 done
 
