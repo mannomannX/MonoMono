@@ -1,6 +1,6 @@
 #!/bin/bash
 # ==============================================================================
-# MONOMONO - HAUPTSKRIPT (v8.0 - Finale, stabile Version)
+# MONOMONO - HAUPTSKRIPT (v8.1 - Self-Contained & Final)
 # ==============================================================================
 # Dieses Skript erstellt ein "Fusions-Repo" aus mehreren GitHub-Repositories.
 # Es ist für den direkten Gebrauch aus dem Projektordner konzipiert.
