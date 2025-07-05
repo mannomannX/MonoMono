@@ -83,50 +83,98 @@ ensure_app_configured() {
     echo "--------------------------------------------------------------------"
 }
 
+#!/bin/bash
+# ==============================================================================
+# MONOMONO - HAUPTSKRIPT (v12.6 - Final Permissions Fix)
+# ==============================================================================
+# This script uses a private GitHub App and direct API calls for the most
+# critical, environment-sensitive steps, ensuring robust automation.
+# ==============================================================================
+
+# --- Configuration & Global Variables ---
+CONFIG_DIR="$HOME/.monomono"
+CONFIG_FILE="$CONFIG_DIR/config.json"
+
+# --- Command-line Argument Logic ---
+case "$1" in
+    --help|-h)
+        # ... (Help text)
+        exit 0;;
+    --reset)
+        if [ -d "$CONFIG_DIR" ]; then rm -rf "$CONFIG_DIR"; echo "✔ MonoMono configuration reset."; fi
+        exit 0;;
+esac
+
+# --- Helper Functions ---
+ensure_app_configured() {
+    if [ -f "$CONFIG_FILE" ] && jq -e '.app_id' "$CONFIG_FILE" >/dev/null 2>&1; then
+        echo "✔ MonoMono App-Konfiguration gefunden."
+        return 0
+    fi
+
+    # --- APP-SETUP-WIZARD ---
+    echo "--------------------------------------------------------------------"
+    echo "🔑 INFO: EINMALIGES APP-SETUP NÖTIG"
+    echo "--------------------------------------------------------------------"
+    echo "‼️  AKTION ERFORDERLICH: Bitte öffne diese URL in deinem lokalen Browser:"
+    echo "    https://github.com/settings/apps/new"
+    echo
+    echo "--- ANLEITUNG IM BROWSER ---"
+    echo "1. App name:         Gib einen eindeutigen Namen ein (z.B. 'Meine-MonoMono-App')"
+    echo "2. Homepage URL:     https://github.com/mannomannX/MonoMono"
+    echo "3. Webhook:          ENTFERNE den Haken bei 'Active'."
+    echo "4. Permissions -> Repository permissions:"
+    echo "   - Actions:       Read & write"
+    echo "   - Contents:      Read & write"
+    echo "   - Administration:Read & write"
+    echo "   - Secrets:       Read & write   <-- WICHTIG!"
+    echo "5. Klicke ganz unten auf 'Create GitHub App'."
+    echo "-------------------------------------------"
+    
+    read -p "? Drücke ENTER, nachdem du die App erstellt hast..."
+    echo
+    echo "--- DATEN SAMMELN ---"
+    read -p "? Bitte gib deine 'App ID' ein: " NEW_APP_ID
+    read -p "? Bitte gib den Namen deiner App ein (exakte Schreibweise): " NEW_APP_NAME
+    echo "Jetzt generiere einen 'Private Key' und lade ihn herunter."
+    read -p "? Bitte gib den vollständigen Pfad zur .pem-Datei ein: " NEW_PRIVATE_KEY_PATH
+
+    mkdir -p "$CONFIG_DIR"
+    echo "{\"app_id\":\"$NEW_APP_ID\",\"private_key_path\":\"$NEW_PRIVATE_KEY_PATH\",\"app_name\":\"$NEW_APP_NAME\"}" > "$CONFIG_FILE"
+    echo
+    echo "✅ App-Konfiguration erfolgreich gespeichert!"
+    echo "--------------------------------------------------------------------"
+}
+
 get_installation_token() {
-    # ... (Diese Funktion bleibt unverändert und verwendet jetzt den korrekten Pfad)
     APP_ID=$(jq -r '.app_id' "$CONFIG_FILE")
     PRIVATE_KEY_PATH=$(jq -r '.private_key_path' "$CONFIG_FILE")
     APP_NAME=$(jq -r '.app_name' "$CONFIG_FILE")
     GITHUB_USER=$(jq -r '.github_user' "$CONFIG_FILE")
 
-    if [ ! -f "$PRIVATE_KEY_PATH" ]; then
-        echo "❌ Fehler: Die .pem-Datei wurde unter '$PRIVATE_KEY_PATH' nicht gefunden."
-        exit 1
-    fi
+    if [ ! -f "$PRIVATE_KEY_PATH" ]; then echo "❌ Fehler: Die .pem-Datei wurde unter '$PRIVATE_KEY_PATH' nicht gefunden."; exit 1; fi
 
-    # Erstelle JWT manuell
-    NOW=$(date +%s)
-    IAT=$(($NOW - 60))
-    EXP=$(($NOW + 600))
+    NOW=$(date +%s); IAT=$(($NOW - 60)); EXP=$(($NOW + 600))
     HEADER_B64=$(echo -n '{"alg":"RS256","typ":"JWT"}' | base64 | tr -d '\n' | tr -d '=' | tr '/+' '_-')
     PAYLOAD_B64=$(echo -n "{\"iat\":$IAT,\"exp\":$EXP,\"iss\":\"$APP_ID\"}" | base64 | tr -d '\n' | tr -d '=' | tr '/+' '_-')
     SIGNATURE_B64=$(openssl dgst -sha256 -sign "$PRIVATE_KEY_PATH" <(echo -n "$HEADER_B64.$PAYLOAD_B64") | base64 | tr -d '\n' | tr -d '=' | tr '/+' '_-')
     JWT="$HEADER_B64.$PAYLOAD_B64.$SIGNATURE_B64"
-    echo "-> JWT für die App-Authentifizierung erstellt."
 
-    # Finde Installations-ID
     INSTALLATION_ID=$(curl -s -H "Authorization: Bearer $JWT" -H "Accept: application/vnd.github.v3+json" https://api.github.com/app/installations | jq ".[] | select(.account.login==\"$GITHUB_USER\") | .id")
 
     while [ -z "$INSTALLATION_ID" ]; do
         echo "--------------------------------------------------------------------"
         echo "⚠️  AKTION ERFORDERLICH: Die App '$APP_NAME' ist noch nicht installiert."
-        echo "   Bitte öffne den folgenden Link, um die App für deinen Account zu installieren:"
-        echo "       https://github.com/settings/apps/$APP_NAME/installations"
-        echo "   Wähle dort 'All repositories' aus und klicke auf 'Install'."
-        read -p "? Drücke ENTER, nachdem du die Installation im Browser abgeschlossen hast..."
+        echo "   Bitte öffne: https://github.com/settings/apps/$APP_NAME/installations"
+        echo "   Wähle 'All repositories' und klicke 'Install'."
+        read -p "? Drücke ENTER, nachdem du die Installation abgeschlossen hast..."
         sleep 3
         INSTALLATION_ID=$(curl -s -H "Authorization: Bearer $JWT" -H "Accept: application/vnd.github.v3+json" https://api.github.com/app/installations | jq ".[] | select(.account.login==\"$GITHUB_USER\") | .id")
     done
-    echo "✔ App-Installation erfolgreich erkannt."
-
-    # Erstelle Installation-Token
+    
     INSTALLATION_TOKEN=$(curl -s -X POST -H "Authorization: Bearer $JWT" -H "Accept: application/vnd.github.v3+json" "https://api.github.com/app/installations/$INSTALLATION_ID/access_tokens" | jq -r '.token')
     
-    if [ -z "$INSTALLATION_TOKEN" ] || [ "$INSTALLATION_TOKEN" == "null" ]; then
-        echo "❌ Fehler beim Erstellen des Installation-Tokens."
-        exit 1
-    fi
+    if [ -z "$INSTALLATION_TOKEN" ] || [ "$INSTALLATION_TOKEN" == "null" ]; then echo "❌ Fehler beim Erstellen des Installation-Tokens."; exit 1; fi
 
     export GH_TOKEN=$INSTALLATION_TOKEN
     echo "✔ Erfolgreich als MonoMono-App authentifiziert."
