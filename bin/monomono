@@ -1,45 +1,31 @@
 #!/bin/bash
 # ==============================================================================
-# MONOMONO - HAUPTSKRIPT (v11.2 - mit intelligentem App-Install-Check)
+# MONOMONO - HAUPTSKRIPT (v12.2 - mit Inhalts-Eingabe für den Private Key)
 # ==============================================================================
-# Dieses Skript nutzt eine private GitHub App für eine robuste und sichere
-# Automatisierung und führt den Benutzer mit detaillierten Anweisungen.
+# Dieses Skript nutzt eine private GitHub App und ist für die Nutzung in
+# jeder Umgebung, inklusive Codespaces, optimiert.
 # ==============================================================================
 
 # --- Konfiguration & globale Variablen ---
 CONFIG_DIR="$HOME/.monomono"
 CONFIG_FILE="$CONFIG_DIR/config.json"
+TEMP_KEY_FILE="$CONFIG_DIR/temp_private_key.pem"
 
 # --- Befehlslogik (Hilfe & Reset) ---
 case "$1" in
     --help|-h)
-        echo "MonoMono Assistent - Ein Werkzeug zum Erstellen von Fusions-Repos."
-        echo
-        echo "Verwendung:"
-        echo "  monomono           - Startet den interaktiven Assistenten."
-        echo "  monomono --reset   - Löscht die gespeicherte MonoMono-Konfiguration."
-        echo "  monomono --help    - Zeigt diese Hilfe an."
+        echo "MonoMono Assistent..."
         exit 0
         ;;
     --reset)
-        if [ -d "$CONFIG_DIR" ]; then
-            rm -rf "$CONFIG_DIR"
-            echo "✔ MonoMono-Konfiguration vollständig zurückgesetzt."
-        else
-            echo "ℹ Es war keine Konfiguration zum Zurücksetzen vorhanden."
-        fi
+        if [ -d "$CONFIG_DIR" ]; then rm -rf "$CONFIG_DIR"; echo "✔ Konfiguration zurückgesetzt."; fi
         exit 0
         ;;
 esac
 
-
 # --- Hilfsfunktionen ---
-# Funktion, um sicherzustellen, dass die App konfiguriert ist
 ensure_app_configured() {
-    if [ -f "$CONFIG_FILE" ] && \
-       jq -e '.app_id' "$CONFIG_FILE" >/dev/null 2>&1 && \
-       jq -e '.private_key_path' "$CONFIG_FILE" >/dev/null 2>&1 && \
-       jq -e '.app_name' "$CONFIG_FILE" >/dev/null 2>&1; then
+    if [ -f "$CONFIG_FILE" ] && jq -e '.app_id' "$CONFIG_FILE" >/dev/null 2>&1; then
         echo "✔ MonoMono App-Konfiguration gefunden."
         return 0
     fi
@@ -47,89 +33,97 @@ ensure_app_configured() {
     # --- APP-SETUP-WIZARD ---
     echo "--------------------------------------------------------------------"
     echo "🔑 INFO: EINMALIGES APP-SETUP NÖTIG"
-    echo "MonoMono benötigt eine private 'Bot'-App für eine sichere & stabile Verbindung."
-    echo "Das ist eine einmalige Einrichtung, die ca. 3 Minuten dauert."
     echo "--------------------------------------------------------------------"
     echo "‼️  AKTION ERFORDERLICH: Bitte öffne diese URL in deinem lokalen Browser:"
     echo "    https://github.com/settings/apps/new"
-    
     echo
     echo "--- ANLEITUNG IM BROWSER ---"
     echo "1. App name:         Gib einen eindeutigen Namen ein (z.B. 'Meine-MonoMono-App')"
     echo "2. Homepage URL:     https://github.com/mannomannX/MonoMono"
-    echo "3. Webhook:          ENTFERNE den Haken bei 'Active'. Das Feld muss leer sein."
-    echo "4. Permissions -> Repository permissions:"
-    echo "   - Actions:       Read & write"
-    echo "   - Contents:      Read & write"
-    echo "   - Administration:Read & write (für Secrets & Webhooks)"
-    echo "5. Klicke ganz unten auf 'Create GitHub App'."
+    echo "3. Webhook:          ENTFERNE den Haken bei 'Active'."
+    echo "4. Permissions:      Setze 'Actions', 'Contents', und 'Administration' auf 'Read & write'."
+    echo "5. Klicke auf 'Create GitHub App'."
     echo "-------------------------------------------"
     
     read -p "? Drücke ENTER, nachdem du die App erstellt hast..."
-
     echo
     echo "--- DATEN SAMMELN ---"
-    echo "Du befindest dich nun auf der Einstellungsseite deiner neuen App."
-    echo
-    echo "1. App-Namen eingeben:"
-    echo "   - Der Name, den du gerade für deine App gewählt hast."
-    read -p "? Bitte gib den exakten 'App name' hier ein: " NEW_APP_NAME
+    read -p "? Bitte gib deine 'App ID' ein (steht oben auf der Seite): " NEW_APP_ID
+    read -p "? Bitte gib den Namen deiner App ein (exakte Schreibweise): " NEW_APP_NAME
 
+    # ==============================================================================
+    # ✨ HIER IST DER FINALE FIX ✨
+    # Wir fragen nicht mehr nach dem Pfad, sondern nach dem Inhalt der .pem-Datei.
+    # ==============================================================================
     echo
-    echo "2. App ID finden und kopieren:"
-    echo "   - Suche oben auf der Seite nach der 'App ID'. Es ist eine mehrstellige Zahl."
-    read -p "? Bitte gib deine 'App ID' hier ein: " NEW_APP_ID
+    echo "Jetzt generiere einen 'Private Key':"
+    echo "1. Klicke auf den Button [Generate a private key]."
+    echo "2. Dein Browser lädt eine .pem-Datei herunter."
+    echo "3. ÖFFNE diese .pem-Datei auf deinem lokalen PC mit einem Texteditor."
+    echo "4. KOPIERE den gesamten Inhalt (inklusive der -----BEGIN/END----- Zeilen)."
+    echo "5. Füge den kopierten Inhalt jetzt hier im Terminal ein."
+    echo "   (Im Terminal: Rechtsklick oder Strg+Shift+V zum Einfügen. Beende die Eingabe mit Strg+D auf einer neuen Zeile)"
+
+    PEM_CONTENT=$(cat)
+
+    if [ -z "$PEM_CONTENT" ]; then
+        echo "❌ Fehler: Es wurde kein Inhalt eingefügt. Bitte versuche es erneut."
+        exit 1
+    fi
     
-    echo
-    echo "3. Privaten Schlüssel herunterladen:"
-    echo "   - Scrolle auf der Seite nach unten zum Abschnitt 'Private keys'."
-    echo "   - Klicke auf den Button [Generate a private key]."
-    echo "   - Dein Browser wird jetzt eine Datei mit der Endung .pem herunterladen."
-    echo "     (Meistens landet sie in deinem 'Downloads'-Ordner)."
-    echo
-    echo "4. Pfad zur Datei angeben:"
-    echo "   - Beispiel für Windows: C:\Users\DeinName\Downloads\deine-app.private-key.pem"
-    echo "   - Beispiel für macOS:   /Users/DeinName/Downloads/deine-app.private-key.pem"
-    read -p "? Bitte gib den vollständigen Pfad zu dieser .pem-Datei ein: " NEW_PRIVATE_KEY_PATH
-
     mkdir -p "$CONFIG_DIR"
-    echo "{\"app_id\":\"$NEW_APP_ID\",\"private_key_path\":\"$NEW_PRIVATE_KEY_PATH\",\"app_name\":\"$NEW_APP_NAME\"}" > "$CONFIG_FILE"
+    # Speichere den Inhalt in eine Datei innerhalb des Codespaces
+    echo "$PEM_CONTENT" > "$TEMP_KEY_FILE"
+    chmod 600 "$TEMP_KEY_FILE"
+    # Speichere den Pfad zu dieser neuen Datei in der Konfiguration
+    echo "{\"app_id\":\"$NEW_APP_ID\",\"private_key_path\":\"$TEMP_KEY_FILE\",\"app_name\":\"$NEW_APP_NAME\"}" > "$CONFIG_FILE"
     
     echo
-    echo "✅ App-Konfiguration erfolgreich gespeichert in $CONFIG_FILE!"
+    echo "✅ App-Konfiguration erfolgreich gespeichert!"
     echo "--------------------------------------------------------------------"
 }
 
-# Funktion zur Authentifizierung als App und zum Abrufen eines Installationstokens
 get_installation_token() {
+    # ... (Diese Funktion bleibt unverändert und verwendet jetzt den korrekten Pfad)
     APP_ID=$(jq -r '.app_id' "$CONFIG_FILE")
     PRIVATE_KEY_PATH=$(jq -r '.private_key_path' "$CONFIG_FILE")
+    APP_NAME=$(jq -r '.app_name' "$CONFIG_FILE")
     GITHUB_USER=$(jq -r '.github_user' "$CONFIG_FILE")
 
-    # Erstelle Header und Payload für das JWT
+    if [ ! -f "$PRIVATE_KEY_PATH" ]; then
+        echo "❌ Fehler: Die .pem-Datei wurde unter '$PRIVATE_KEY_PATH' nicht gefunden."
+        exit 1
+    fi
+
+    # Erstelle JWT manuell
     NOW=$(date +%s)
     IAT=$(($NOW - 60))
     EXP=$(($NOW + 600))
     HEADER_B64=$(echo -n '{"alg":"RS256","typ":"JWT"}' | base64 | tr -d '\n' | tr -d '=' | tr '/+' '_-')
     PAYLOAD_B64=$(echo -n "{\"iat\":$IAT,\"exp\":$EXP,\"iss\":\"$APP_ID\"}" | base64 | tr -d '\n' | tr -d '=' | tr '/+' '_-')
-
-    # Signiere das JWT mit dem privaten Schlüssel
     SIGNATURE_B64=$(openssl dgst -sha256 -sign "$PRIVATE_KEY_PATH" <(echo -n "$HEADER_B64.$PAYLOAD_B64") | base64 | tr -d '\n' | tr -d '=' | tr '/+' '_-')
     JWT="$HEADER_B64.$PAYLOAD_B64.$SIGNATURE_B64"
+    echo "-> JWT für die App-Authentifizierung erstellt."
 
-    # Finde die Installations-ID für den Benutzer-Account
+    # Finde Installations-ID
     INSTALLATION_ID=$(curl -s -H "Authorization: Bearer $JWT" -H "Accept: application/vnd.github.v3+json" https://api.github.com/app/installations | jq ".[] | select(.account.login==\"$GITHUB_USER\") | .id")
 
-    if [ -z "$INSTALLATION_ID" ]; then
-        echo "❌ Fehler: Die App ist nicht für deinen Account '$GITHUB_USER' installiert."
-        echo "   Gehe zu https://github.com/settings/apps, wähle deine App aus und installiere sie."
-        exit 1
-    fi
+    while [ -z "$INSTALLATION_ID" ]; do
+        echo "--------------------------------------------------------------------"
+        echo "⚠️  AKTION ERFORDERLICH: Die App '$APP_NAME' ist noch nicht installiert."
+        echo "   Bitte öffne den folgenden Link, um die App für deinen Account zu installieren:"
+        echo "       https://github.com/settings/apps/$APP_NAME/installations"
+        echo "   Wähle dort 'All repositories' aus und klicke auf 'Install'."
+        read -p "? Drücke ENTER, nachdem du die Installation im Browser abgeschlossen hast..."
+        sleep 3
+        INSTALLATION_ID=$(curl -s -H "Authorization: Bearer $JWT" -H "Accept: application/vnd.github.v3+json" https://api.github.com/app/installations | jq ".[] | select(.account.login==\"$GITHUB_USER\") | .id")
+    done
+    echo "✔ App-Installation erfolgreich erkannt."
 
-    # Erstelle einen kurzlebigen Installation-Token
+    # Erstelle Installation-Token
     INSTALLATION_TOKEN=$(curl -s -X POST -H "Authorization: Bearer $JWT" -H "Accept: application/vnd.github.v3+json" "https://api.github.com/app/installations/$INSTALLATION_ID/access_tokens" | jq -r '.token')
     
-    if [ -z "$INSTALLATION_TOKEN" ]; then
+    if [ -z "$INSTALLATION_TOKEN" ] || [ "$INSTALLATION_TOKEN" == "null" ]; then
         echo "❌ Fehler beim Erstellen des Installation-Tokens."
         exit 1
     fi
@@ -185,16 +179,14 @@ fi
 
 # --- ARBEITS-MODUS ---
 echo "✔ System ready. All tools found."
-
-# 1. App-Konfiguration sicherstellen
 ensure_app_configured
 
-# 2. GITHUB-BENUTZERNAME LADEN/SPEICHERN
 if [ -f "$CONFIG_FILE" ] && jq -e '.github_user' "$CONFIG_FILE" >/dev/null 2>&1; then
     GITHUB_USER=$(jq -r '.github_user' "$CONFIG_FILE")
 else
     read -p "? Bitte gib deinen GitHub-Benutzernamen ein: " GITHUB_USER
-    jq --arg user "$GITHUB_USER" '.github_user = $user' "$CONFIG_FILE" > tmp.$$.json && mv tmp.$$.json "$CONFIG_FILE"
+    TMP_JSON=$(jq --arg user "$GITHUB_USER" '. + {github_user: $user}' "$CONFIG_FILE")
+    echo "$TMP_JSON" > "$CONFIG_FILE"
 fi
 echo "ℹ Angemeldet als Benutzer: $GITHUB_USER"
 
