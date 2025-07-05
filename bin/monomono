@@ -1,9 +1,9 @@
 #!/bin/bash
 # ==============================================================================
-# MONOMONO - HAUPTSKRIPT (v12.2 - mit Inhalts-Eingabe für den Private Key)
+# MONOMONO - HAUPTSKRIPT (v12.5 - Finaler Hybrid-Auth-Fix)
 # ==============================================================================
-# Dieses Skript nutzt eine private GitHub App und ist für die Nutzung in
-# jeder Umgebung, inklusive Codespaces, optimiert.
+# Dieses Skript nutzt eine hybride Authentifizierung, um die Berechtigungsprobleme
+# in automatisierten Umgebungen endgültig zu lösen.
 # ==============================================================================
 
 # --- Konfiguration & globale Variablen ---
@@ -14,7 +14,7 @@ TEMP_KEY_FILE="$CONFIG_DIR/temp_private_key.pem"
 # --- Befehlslogik (Hilfe & Reset) ---
 case "$1" in
     --help|-h)
-        echo "MonoMono Assistent..."
+        # ... (Hilfetext)
         exit 0
         ;;
     --reset)
@@ -190,39 +190,30 @@ else
 fi
 echo "ℹ Angemeldet als Benutzer: $GITHUB_USER"
 
-# 3. Als App authentifizieren
-get_installation_token
+# 4. AUTHENTIFIZIERUNG MIT PERSONAL ACCESS TOKEN (PAT)
+echo "--------------------------------------------------------------------"
+echo "🔑 INFO: Ein persönlicher Zugriffstoken (PAT) wird benötigt."
+echo "‼️  AKTION ERFORDERLICH: Öffne https://github.com/settings/tokens/new"
+echo "   Anleitung: Wähle die Scopes 'repo' UND 'workflow' aus, generiere den Token und kopiere ihn."
+echo "--------------------------------------------------------------------"
+PAT=""
+while [ -z "$PAT" ]; do
+    read -s -p "👉 Bitte füge den kopierten Token hier ein und drücke ENTER: " PAT; echo
+done
+echo "-> Überprüfe den Access Token..."
+HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: token $PAT" https://api.github.com/user)
+if [ "$HTTP_STATUS" -ne 200 ]; then
+    echo "❌ FEHLER: Der Token ist ungültig (HTTP-Status: $HTTP_STATUS)." >&2; exit 1
+fi
+VALIDATED_USER=$(curl -s -H "Authorization: token $PAT" https://api.github.com/user | jq -r '.login')
+echo "✔ Access Token ist gültig für Benutzer '$VALIDATED_USER'."
 
 # 4. PROJEKT-SETUP
 echo "-------------------------------------------"
 echo "🚀 Starte den Assistenten..."
 echo "1/5: Lade Repositories via API..."
-REPOS_LIST=""
-PAGE=1
-while true; do
-    # Fordere eine Seite mit bis zu 100 Repos an
-    RESPONSE=$(curl -s -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github.v3+json" "https://api.github.com/installation/repositories?per_page=100&page=$PAGE")
-    
-    # Extrahiere die Namen aus der aktuellen Seite
-    PAGE_REPOS=$(echo "$RESPONSE" | jq -r '.repositories[].full_name')
-    
-    # Wenn die Seite leer ist, sind wir fertig
-    if [ -z "$PAGE_REPOS" ]; then
-        break
-    fi
-    
-    # Füge die Ergebnisse zur Gesamtliste hinzu
-    REPOS_LIST="${REPOS_LIST}${PAGE_REPOS}\n"
-    
-    # Gehe zur nächsten Seite
-    ((PAGE++))
-done
-
-if [ -z "$REPOS_LIST" ]; then
-    echo "❌ Keine Repositories gefunden oder die App hat keinen Zugriff."
-    echo "   Stelle sicher, dass du die App für 'All repositories' installiert hast."
-    exit 1
-fi
+REPOS_LIST=$(curl -s -H "Authorization: token $PAT" "https://api.github.com/user/repos?type=owner&per_page=100" | jq -r '.[].full_name')
+if [ -z "$REPOS_LIST" ]; then echo "❌ Keine Repositories gefunden."; exit 1; fi
 echo "✔ Alle $(echo -e "$REPOS_LIST" | wc -l) Repositories erfolgreich geladen."
 
 echo -e "2/5: Wähle die zu fusionierenden Repos:\n(Navigation: Pfeiltasten, Auswahl: TAB, Bestätigen: ENTER)"
@@ -264,54 +255,18 @@ if [[ "$ACTIVATE_WEBHOOKS" =~ ^[YyJj]$ ]]; then
 fi
 
 # 6. REPO ERSTELLEN & SECRET SETZEN
-echo "-> Creating repo '$FUSION_REPO_NAME' via API..."
-# Erstelle den JSON-Body für die API-Anfrage
-JSON_PAYLOAD=$(jq -n \
-                  --arg name "$FUSION_REPO_NAME" \
-                  --arg desc "Automatic fusion repo by MonoMono" \
-                  --argjson private_flag "$(if [ "$VISIBILITY_FLAG" == "--private" ]; then echo "true"; else echo "false"; fi)" \
-                  '{name: $name, description: $desc, private: $private_flag}')
-
-CREATE_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-     -X POST \
-     -H "Authorization: Bearer $GH_TOKEN" \
-     -H "Accept: application/vnd.github.v3+json" \
-     https://api.github.com/user/repos \
-     -d "$JSON_PAYLOAD")
-
-if [ "$CREATE_STATUS" -ne 201 ]; then
-    echo "❌ Fehler beim Erstellen des GitHub-Repos (HTTP-Status: $CREATE_STATUS)."
-    exit 1
-fi
+echo "-> Creating repo '$FUSION_REPO_NAME'..."
+# Wir authentifizieren diesen einen Befehl explizit mit dem PAT
+GH_TOKEN=$PAT gh repo create "$GITHUB_USER/$FUSION_REPO_NAME" "$VISIBILITY_FLAG" --description "Automatic fusion repo by MonoMono" >/dev/null || { echo "❌ Error creating the GitHub repo."; exit 1; }
 echo "✔ Repository erfolgreich erstellt."
 
-echo "-> Speichere den Token sicher als 'ACCESS_TOKEN' Secret im neuen Repo..."
-# 1. Get the public key for the repository
-PUBLIC_KEY_RESPONSE=$(curl -s -w "\n%{http_code}" -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/$GITHUB_USER/$FUSION_REPO_NAME/actions/secrets/public-key")
-KEY_STATUS=$(echo "$PUBLIC_KEY_RESPONSE" | tail -n1)
-if [ "$KEY_STATUS" -ne 200 ]; then
-    echo "❌ Fehler beim Abrufen des Public Keys für Secrets (HTTP-Status: $KEY_STATUS)."
-    exit 1
-fi
-PUBLIC_KEY=$(echo "$PUBLIC_KEY_RESPONSE" | head -n -1 | jq -r .key)
-KEY_ID=$(echo "$PUBLIC_KEY_RESPONSE" | head -n -1 | jq -r .key_id)
+# JETZT wechseln wir zum sicheren App-Token für den Rest des Prozesses
+echo "-> Wechsle zur App-Authentifizierung für weitere Aktionen..."
+get_installation_token # Holt den App-Token und exportiert ihn als GH_TOKEN
 
-# 2. Encrypt the secret using the public key
-ENCRYPTED_SECRET=$(echo -n "$GH_TOKEN" | gh secret encode --key "$PUBLIC_KEY")
-
-# 3. Upload the encrypted secret
-SECRET_PAYLOAD=$(jq -n --arg key_id "$KEY_ID" --arg secret "$ENCRYPTED_SECRET" '{key_id: $key_id, encrypted_value: $secret}')
-SECRET_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
-     -X PUT \
-     -H "Authorization: Bearer $GH_TOKEN" \
-     -H "Accept: application/vnd.github.v3+json" \
-     "https://api.github.com/repos/$GITHUB_USER/$FUSION_REPO_NAME/actions/secrets/ACCESS_TOKEN" \
-     -d "$SECRET_PAYLOAD")
-
-if [ "$SECRET_STATUS" -ne 201 ] && [ "$SECRET_STATUS" -ne 204 ]; then
-    echo "❌ Fehler beim Setzen des Secrets (HTTP-Status: $SECRET_STATUS)."
-    exit 1
-fi
+echo "-> Speichere den App-Token sicher als 'ACCESS_TOKEN' Secret im neuen Repo..."
+# gh secret set verwendet jetzt den App-Token (GH_TOKEN)
+echo -n "$GH_TOKEN" | gh secret set ACCESS_TOKEN --repo "$GITHUB_USER/$FUSION_REPO_NAME" || { echo "❌ Fehler beim Setzen des Secrets."; exit 1; }
 echo "✔ Secret erfolgreich im Repository '$FUSION_REPO_NAME' gespeichert."
 
 WORKFLOW_NAME="Fusion-Repo Erstellen & Aktualisieren"
