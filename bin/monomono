@@ -197,8 +197,33 @@ get_installation_token
 echo "-------------------------------------------"
 echo "🚀 Starte den Assistenten..."
 echo "1/5: Lade Repositories via API..."
-REPOS_LIST=$(curl -s -H "Authorization: token $PAT" "https://api.github.com/user/repos?type=owner&per_page=100" | jq -r '.[].full_name')
-if [ -z "$REPOS_LIST" ]; then echo "❌ Keine Repositories gefunden."; exit 1; fi
+REPOS_LIST=""
+PAGE=1
+while true; do
+    # Fordere eine Seite mit bis zu 100 Repos an
+    RESPONSE=$(curl -s -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github.v3+json" "https://api.github.com/installation/repositories?per_page=100&page=$PAGE")
+    
+    # Extrahiere die Namen aus der aktuellen Seite
+    PAGE_REPOS=$(echo "$RESPONSE" | jq -r '.repositories[].full_name')
+    
+    # Wenn die Seite leer ist, sind wir fertig
+    if [ -z "$PAGE_REPOS" ]; then
+        break
+    fi
+    
+    # Füge die Ergebnisse zur Gesamtliste hinzu
+    REPOS_LIST="${REPOS_LIST}${PAGE_REPOS}\n"
+    
+    # Gehe zur nächsten Seite
+    ((PAGE++))
+done
+
+if [ -z "$REPOS_LIST" ]; then
+    echo "❌ Keine Repositories gefunden oder die App hat keinen Zugriff."
+    echo "   Stelle sicher, dass du die App für 'All repositories' installiert hast."
+    exit 1
+fi
+echo "✔ Alle $(echo -e "$REPOS_LIST" | wc -l) Repositories erfolgreich geladen."
 
 echo -e "2/5: Wähle die zu fusionierenden Repos:\n(Navigation: Pfeiltasten, Auswahl: TAB, Bestätigen: ENTER)"
 SELECTED_REPOS=$(echo "$REPOS_LIST" | fzf --multi --height 40% --border --prompt="Select> ")
