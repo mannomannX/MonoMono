@@ -188,6 +188,10 @@ if [ -n "$CRON_SCHEDULE" ]; then
     ON_TRIGGERS+="\n$CRON_SCHEDULE"
 fi
 
+if $SETUP_WEBHOOKS; then
+    ON_TRIGGERS+="\n  repository_dispatch:\n    types: [monomono-sync-event]"
+fi
+
 read -r -d '' WORKFLOW_CONTENT << EOM
 name: '$WORKFLOW_NAME'
 $ON_TRIGGERS
