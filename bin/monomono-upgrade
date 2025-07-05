@@ -108,7 +108,7 @@ fi
 # Webhook-Konfigurationen werden nicht angefasst, da sie in den Sub-Repos liegen.
 
 read -r -d '' NEW_WORKFLOW_CONTENT << EOM
-name: '$WORKFLOW_NAME'
+name: 'Fusion-Repo Erstellen & Aktualisieren'
 $ON_TRIGGERS
 jobs:
   sync-repos:
