@@ -1,73 +1,72 @@
-# MonoMono
+# MonoMono  आसान
 
 > "So good, they named it twice."
 
-**MonoMono** ist ein einfaches, aber mächtiges Kommandozeilen-Tool, das dir hilft, mehrere zusammengehörige Git-Repositories in einem einzigen "Fusions-Repo" zu spiegeln. Perfekt für Projekte, bei denen Frontend, Backend und andere Dienste in getrennten Repos entwickelt werden, du aber eine zentrale, stets aktuelle Gesamtansicht benötigst.
+**MonoMono** is a simple yet powerful command-line tool that helps you mirror multiple, related Git repositories into a single "fusion repo." It's perfect for projects where the frontend, backend, and other services are developed in separate repos, but you need a central, always up-to-date overview.
 
 ---
 
 ## ✨ Features
 
-* **Interaktiver Assistent:** Ein geführter Prozess (`monomono`), der dich durch die gesamte Einrichtung führt – von der Auswahl der Repos bis zur Konfiguration der Update-Methoden.
-* **Flexible Synchronisierung:** Wähle die für dich passende Update-Methode:
-    * **Manuell:** Stoße ein Update jederzeit per Befehl an (`monomono-update`).
-    * **Zeitgesteuert:** Lass das Fusions-Repo automatisch in einem von dir festgelegten Intervall (z.B. stündlich, täglich) aktualisieren.
-    * **Echtzeit (Power-User):** Richte eine "Action-zu-Action"-Brücke ein, die das Fusions-Repo sofort aktualisiert, sobald du etwas in eines deiner Sub-Repos pushst.
-* **Intelligente Einrichtung:** Automatische Installation von Abhängigkeiten (`gh`, `fzf`, `jq`) und eine robuste Konfiguration, die auch in speziellen Umgebungen wie GitHub Codespaces funktioniert.
-* **Volle Kontrolle:** Entscheide bei der Erstellung, ob dein Fusions-Repo **öffentlich** oder **privat** sein soll.
-* **Sauberes Management:** Eigene Befehle zum Aktualisieren (`monomono-update`) und zum sauberen Trennen aller Verbindungen und Konfigurationen (`monomono-disconnect`).
-* **Sicher:** Verwendet von GitHub empfohlene Methoden zur Authentifizierung (Personal Access Tokens & Repository Secrets).
+* **Interactive Wizard:** A guided process (`monomono`) that walks you through the entire setup—from selecting repos to configuring update methods.
+* **Flexible Synchronization:** Choose the update method that fits your needs:
+    * **Manual:** Trigger an update anytime with a simple command (`monomono-update`).
+    * **Scheduled:** Let the fusion repo update automatically at a predefined interval (e.g., hourly, daily).
+    * **Real-time (Power-User):** Set up an "action-to-action" bridge that instantly updates the fusion repo as soon as you push to any of your sub-repos.
+* **Intelligent Setup:** Automatically installs dependencies (`gh`, `fzf`, `jq`) and uses a robust configuration that works reliably even in special environments like GitHub Codespaces.
+* **Full Control:** Decide whether your new fusion repo should be **public** or **private** during creation.
+* **Clean Management:** Dedicated commands for updating (`monomono-update`) and cleanly disconnecting all links and configurations (`monomono-disconnect`).
+* **Secure:** Uses GitHub-recommended authentication methods (Personal Access Tokens & Repository Secrets).
 
-## 🚀 Erste Schritte
+## 🚀 Getting Started
 
-### Voraussetzungen
+### Prerequisites
 
-Bevor du loslegst, stelle sicher, dass die folgenden Kommandozeilen-Tools auf deinem System installiert sind. Falls nicht, wird dich der `monomono`-Assistent bei der ersten Ausführung durch die Installation führen.
+Before you begin, make sure the following command-line tools are installed. If not, the `monomono` wizard will guide you through the installation on its first run.
 
 * [**GitHub CLI (`gh`)**](https://cli.github.com/)
 * [**fzf (fuzzy finder)**](https://github.com/junegunn/fzf)
 * [**jq (JSON processor)**](https://stedolan.github.io/jq/)
 
-### Installation & Ausführung
+### Installation & Usage
 
-Die empfohlene Methode ist, das Repository zu klonen und die Skripte direkt auszuführen. Das ist die robusteste Methode, besonders in Cloud-Umgebungen wie Codespaces.
+The recommended method is to clone the repository and run the scripts directly. This is the most robust approach, especially in cloud environments like Codespaces.
 
 ```bash
-# 1. Klone das MonoMono-Repository
+# 1. Clone the MonoMono repository
 git clone [https://github.com/mannomannX/MonoMono.git](https://github.com/mannomannX/MonoMono.git)
 
-# 2. Navigiere in den Projektordner
+# 2. Navigate into the project directory
 cd MonoMono
 
-# 3. Mache die Skripte ausführbar (nur einmalig nötig)
+# 3. Make the scripts executable (one-time setup)
 chmod +x ./bin/monomono
 chmod +x ./bin/monomono-update
 chmod +x ./bin/monomono-disconnect
 ```
 
-Danach kannst du die Befehle immer aus dem Hauptverzeichnis des Projekts ausführen.
+After this setup, you can run the commands from the main project directory.
 
-## ⚙️ Verwendung
+## ⚙️ How to Use
 
-#### Ein neues Fusions-Repo erstellen
-Der Hauptbefehl startet den interaktiven Assistenten, der dich durch den gesamten Prozess führt.
+#### Create a New Fusion Repo
+The main command launches the interactive wizard that guides you through the entire process.
 
 ```bash
 ./bin/monomono
 ```
 
-#### Ein bestehendes Fusions-Repo manuell aktualisieren
-Dieser Befehl ist nützlich, wenn du eine sofortige Synchronisierung erzwingen möchtest. Er muss aus dem Verzeichnis des geklonten Fusions-Repos ausgeführt werden.
+#### Manually Update an Existing Fusion Repo
+This command is useful when you want to force an immediate synchronization. It must be run from within the directory of the cloned fusion repo.
 
 ```bash
-# Beispiel
+# Example
 monomono-update
 ```
-*(Hinweis: Wenn du die optionale `install.sh`-Datei verwendest, um die Befehle global zu installieren, kannst du diesen Befehl von überall aus nutzen.)*
+*(Note: If you use the optional `install.sh` file to install the commands globally, you can run this command from anywhere.)*
 
-
-#### Eine Verbindung sauber trennen
-Dieses Skript entfernt alle von MonoMono erstellten Konfigurationen (Trigger-Workflows und Secrets) aus deinen Sub-Repos und fragt dich optional, ob auch das Fusions-Repo selbst gelöscht werden soll.
+#### Cleanly Disconnect a Fusion Repo
+This script removes all configurations created by MonoMono (trigger workflows and secrets) from your sub-repos and optionally asks if you want to delete the fusion repo itself.
 
 ```bash
 ./bin/monomono-disconnect
@@ -75,8 +74,8 @@ Dieses Skript entfernt alle von MonoMono erstellten Konfigurationen (Trigger-Wor
 
 ---
 
-## Wie es funktioniert
+## How It Works
 
-MonoMono nutzt die **GitHub CLI** und die **GitHub API**, um Repositories zu erstellen und zu verwalten. Das Herzstück ist ein **GitHub Actions Workflow**, der im Fusions-Repo installiert wird. Dieser Workflow ist dafür verantwortlich, die Inhalte der Sub-Repos zu klonen und das Fusions-Repo aktuell zu halten.
+MonoMono leverages the **GitHub CLI** and the **GitHub API** to create and manage repositories. The core of the system is a **GitHub Actions Workflow** that is installed in the fusion repo. This workflow is responsible for cloning the contents of the sub-repos and keeping the fusion repo up to date.
 
-Für die Echtzeit-Synchronisierung wird eine **Action-zu-Action-Brücke** gebaut: Ein winziger "Trigger-Workflow" wird in den Sub-Repos platziert, der bei einem `push` eine Nachricht an den Haupt-Workflow im Fusions-Repo sendet und so den Synchronisierungsprozess anstößt.
+For real-time synchronization, an **action-to-action bridge** is built: a tiny "trigger workflow" is placed in the sub-repos, which sends a message to the main workflow in the fusion repo upon a `push`, thus initiating the synchronization process.
