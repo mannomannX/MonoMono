@@ -41,9 +41,7 @@ if [ ! -f "$WORKFLOW_FILE_PATH" ]; then
     echo "❌ Fehler: Konnte keine 'sync.yml' im angegebenen Repository finden."
     rm -rf "$TEMP_DIR"; exit 1
 fi
-# Extrahiere die Zeile mit `SUB_REPOS=` aus der alten Datei
 SUB_REPOS_LINE=$(grep -m 1 'REPOS_TO_SYNC=' "$WORKFLOW_FILE_PATH")
-# Schneide nur den Wert der Variable aus
 SUB_REPOS=$(echo "$SUB_REPOS_LINE" | sed -e "s/.*inputs.repos || '//" -e "s/' *}}//")
 if [ -z "$SUB_REPOS" ]; then
     echo "❌ Fehler: Konnte die Sub-Repo-Liste nicht aus dem bestehenden Workflow lesen."
