@@ -29,7 +29,7 @@ case "$1" in
 esac
 
 # --- Hilfsfunktionen ---
-# Funktion, um sicherzustellen, dass die App konfiguriert ist
+# Funktion, um die App-Konfiguration zu prüfen und einzurichten
 ensure_app_configured() {
     if [ -f "$CONFIG_FILE" ] && \
        jq -e '.app_id' "$CONFIG_FILE" >/dev/null 2>&1 && \
@@ -53,7 +53,7 @@ ensure_app_configured() {
     echo "--- ANLEITUNG IM BROWSER ---"
     echo "1. App name:         Gib einen Namen ein (z.B. 'Meine-MonoMono-App')"
     echo "2. Homepage URL:     https://github.com/mannomannX/MonoMono"
-    echo "3. Webhook:          Lasse dieses Feld komplett leer (wichtig!)"
+    echo "3. Webhook:          ENTFERNE den Haken bei 'Active'. Das Feld muss leer sein." # KORRIGIERTE ANWEISUNG
     echo "4. Permissions -> Repository permissions:"
     echo "   - Actions:       Read & write"
     echo "   - Contents:      Read & write"
@@ -64,18 +64,32 @@ ensure_app_configured() {
     read -p "? Drücke ENTER, nachdem du die App erstellt hast..."
 
     echo
-    echo "--- DATEN SAMMELN ---"
+echo "--- DATEN SAMMELN ---"
     echo "Du befindest dich nun auf der Einstellungsseite deiner neuen App."
-    read -p "? Bitte gib deine 'App ID' ein (steht oben auf der Seite): " NEW_APP_ID
+    echo
+    echo "1. App ID finden und kopieren:"
+    echo "   - Suche oben auf der Seite nach der 'App ID'. Es ist eine mehrstellige Zahl."
+    read -p "? Bitte gib deine 'App ID' hier ein: " NEW_APP_ID
     
-    echo "Jetzt generiere einen 'Private Key':"
-    echo "1. Klicke auf 'Generate a private key'."
-    echo "2. Eine .pem-Datei wird heruntergeladen."
+    echo
+    echo "2. Privaten Schlüssel herunterladen:"
+    echo "   - Scrolle auf der Seite nach unten zum Abschnitt 'Private keys'."
+    echo "   - Klicke auf den Button [Generate a private key]."
+    echo "   - Dein Browser wird jetzt eine Datei mit der Endung .pem herunterladen."
+    echo "     (Meistens landet sie in deinem 'Downloads'-Ordner)."
+    echo
+    echo "3. Pfad zur Datei angeben:"
+    echo "   - Dieses Skript muss wissen, wo die heruntergeladene .pem-Datei liegt."
+    echo "   - Beispiel für Windows: C:\Users\DeinName\Downloads\deine-app.private-key.pem"
+    echo "   - Beispiel für macOS:   /Users/DeinName/Downloads/deine-app.private-key.pem"
+    echo "   - Beispiel für Linux:   /home/DeinName/Downloads/deine-app.private-key.pem"
     read -p "? Bitte gib den vollständigen Pfad zu dieser .pem-Datei ein: " NEW_PRIVATE_KEY_PATH
 
+    # Speichere die Konfiguration
     mkdir -p "$CONFIG_DIR"
     echo "{\"app_id\":\"$NEW_APP_ID\",\"private_key_path\":\"$NEW_PRIVATE_KEY_PATH\"}" > "$CONFIG_FILE"
     
+    echo
     echo "✅ App-Konfiguration erfolgreich gespeichert in $CONFIG_FILE!"
     echo "--------------------------------------------------------------------"
 }
@@ -85,15 +99,18 @@ get_installation_token() {
     APP_ID=$(jq -r '.app_id' "$CONFIG_FILE")
     PRIVATE_KEY_PATH=$(jq -r '.private_key_path' "$CONFIG_FILE")
     
-    # Erstelle ein JWT (JSON Web Token)
-    JWT=$(gh auth token -a "$APP_ID" -p "$PRIVATE_KEY_PATH")
+    # ==============================================================================
+    # ✨ HIER IST DER FIX ✨
+    # Wir verwenden die vollen, robusten Befehls-Flags anstelle der Abkürzungen.
+    # ==============================================================================
+    JWT=$(gh auth token --app-id "$APP_ID" --private-key "$PRIVATE_KEY_PATH")
     
     # Finde die Installations-ID für den Benutzer-Account
     INSTALLATION_ID=$(curl -s -X GET -H "Authorization: Bearer $JWT" -H "Accept: application/vnd.github.v3+json" https://api.github.com/app/installations | jq ".[] | select(.account.login==\"$GITHUB_USER\") | .id")
 
     if [ -z "$INSTALLATION_ID" ]; then
         echo "❌ Fehler: Die MonoMono-App ist nicht für deinen Account '$GITHUB_USER' installiert."
-        echo "   Gehe zu https://github.com/settings/apps/deine-app-name/installations und installiere sie."
+        echo "   Gehe zu https://github.com/settings/apps und installiere die App für deinen Account."
         exit 1
     fi
 
@@ -105,7 +122,6 @@ get_installation_token() {
         exit 1
     fi
 
-    # Exportiere den Token für alle folgenden gh- und git-Befehle
     export GH_TOKEN=$INSTALLATION_TOKEN
     echo "✔ Erfolgreich als MonoMono-App authentifiziert."
 }
