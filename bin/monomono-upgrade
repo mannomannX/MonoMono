@@ -1,9 +1,9 @@
 #!/bin/bash
 # ==============================================================================
-# MonoMono Upgrade-Skript v1.1 (Final)
+# MonoMono Upgrade-Skript v2.0 (Repair Tool)
 # ==============================================================================
-# Aktualisiert den Workflow in einem bestehenden Fusions-Repo auf die neueste,
-# intelligenteste Version (z.B. mit README-Generierung).
+# Repariert einen fehlerhaften Workflow in einem bestehenden Fusions-Repo,
+# indem er ihn mit der neuesten, robustesten Version überschreibt.
 # ==============================================================================
 CONFIG_FILE="$HOME/.monomono_config"
 
@@ -23,35 +23,29 @@ ensure_pat() {
 }
 
 # --- HAUPTLOGIK ---
-echo "MonoMono Workflow Upgrade Assistent"
-echo "-------------------------------------"
-read -p "? Welches Fusions-Repo soll aktualisiert werden? (user/repo): " FUSION_REPO
+echo "MonoMono Workflow Repair-Assistent"
+echo "-----------------------------------"
+read -p "? Welches Fusions-Repo soll repariert werden? (user/repo): " FUSION_REPO
 if [ -z "$FUSION_REPO" ]; then echo "❌ Fehler: Eingabe darf nicht leer sein."; exit 1; fi
 
 ensure_pat
 GITHUB_USER=$(curl -s -H "Authorization: token $MONOMONO_PAT" https://api.github.com/user | jq -r '.login')
 
-# --- Extrahiere bestehende Konfiguration ---
-echo "-> Lese aktuelle Konfiguration aus dem Repo..."
-TEMP_DIR=$(mktemp -d)
-git clone "https://x-access-token:$MONOMONO_PAT@github.com/$FUSION_REPO.git" "$TEMP_DIR" >/dev/null 2>&1 || { echo "❌ Fehler beim Klonen des Repos."; rm -rf "$TEMP_DIR"; exit 1; }
+# Wir fragen den User, welche Sub-Repos verbunden sind, da wir der alten Datei nicht trauen können.
+echo "-> Lade verfügbare Repositories für die Auswahl..."
+REPOS_LIST=$(curl -s -H "Authorization: token $MONOMONO_PAT" "https://api.github.com/user/repos?type=owner&per_page=100" | jq -r '.[].full_name')
+echo -e "? Welche Sub-Repos sind mit '$FUSION_REPO' verbunden?"
+SELECTED_REPOS=$(echo "$REPOS_LIST" | fzf --multi --height 40% --border --prompt="Select> ")
+if [ -z "$SELECTED_REPOS" ]; then echo "❌ Aborted: No repositories selected."; exit 1; fi
+SUB_REPOS=$(echo "$SELECTED_REPOS" | tr '\n' ',' | sed 's/,$//')
 
-WORKFLOW_FILE_PATH="$TEMP_DIR/.github/workflows/sync.yml"
-if [ ! -f "$WORKFLOW_FILE_PATH" ]; then
-    echo "❌ Fehler: Konnte keine 'sync.yml' im angegebenen Repository finden."
-    rm -rf "$TEMP_DIR"; exit 1
-fi
-SUB_REPOS_LINE=$(grep -m 1 'REPOS_TO_SYNC=' "$WORKFLOW_FILE_PATH")
-SUB_REPOS=$(echo "$SUB_REPOS_LINE" | sed -e "s/.*inputs.repos || '//" -e "s/' *}}//")
-if [ -z "$SUB_REPOS" ]; then
-    echo "❌ Fehler: Konnte die Sub-Repo-Liste nicht aus dem bestehenden Workflow lesen."
-    rm -rf "$TEMP_DIR"; exit 1
-fi
-echo "✔ Gefundene Sub-Repos: $SUB_REPOS"
-ON_TRIGGERS=$(sed -n '/^on:/,/^jobs:/p' "$WORKFLOW_FILE_PATH" | sed '$d')
+echo "✔ Konfiguration für die Reparatur geladen."
+
+# --- Generiere den neuen, korrekten Workflow-Inhalt ---
 WORKFLOW_NAME="Fusion-Repo Erstellen & Aktualisieren"
+# Wir erstellen einen minimalen Trigger-Satz. Der User kann 'connect' erneut laufen lassen, um mehr hinzuzufügen.
+ON_TRIGGERS="on:\n  workflow_dispatch:"
 
-# --- Generiere den neuen, verbesserten Workflow-Inhalt ---
 read -r -d '' NEW_WORKFLOW_CONTENT << EOM
 name: '$WORKFLOW_NAME'
 $ON_TRIGGERS
@@ -80,10 +74,9 @@ jobs:
           sudo apt-get update >/dev/null && sudo apt-get install -y tree >/dev/null
           echo "# 🤖 MonoMono Fusions-Repo" > README.md
           echo "" >> README.md
-          echo "Dieses Repository ist eine automatisch generierte Zusammenführung, erstellt von MonoMono." >> README.md
+          echo "Dieses Repository ist eine automatisch generierte Zusammenführung." >> README.md
           echo "" >> README.md
           echo "## 🗺️ Projekt-Map" >> README.md
-          echo "" >> README.md
           echo "### 🧩 Projekt-Komponenten" >> README.md
           for repo in \$(echo "\${{ inputs.repos || '$SUB_REPOS' }}" | sed 's/,/ /g'); do
             echo "- **[\$(basename \$repo)](./\$(basename \$repo))** (Original: [\$repo](https://github.com/\$repo))" >> README.md
@@ -101,7 +94,7 @@ jobs:
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
           git add .
           if ! git diff-index --quiet HEAD; then
-            git commit -m "feat(workflow): Upgrade MonoMono sync logic"
+            git commit -m "feat(workflow): Repair and upgrade MonoMono sync logic"
             git push
           else
             echo "No changes to workflow found."
@@ -109,12 +102,15 @@ jobs:
 EOM
 
 # --- Pushe den neuen Workflow in das Repo ---
-echo "-> Pushe neuen Workflow nach '$FUSION_REPO'..."
-echo -e "$NEW_WORKFLOW_CONTENT" > "$WORKFLOW_FILE_PATH"
+echo "-> Überschreibe den fehlerhaften Workflow in '$FUSION_REPO'..."
+TEMP_DIR=$(mktemp -d)
+git clone "https://x-access-token:$MONOMONO_PAT@github.com/$FUSION_REPO.git" "$TEMP_DIR" >/dev/null 2>&1 || { echo "❌ Fehler beim Klonen des Repos."; rm -rf "$TEMP_DIR"; exit 1; }
+mkdir -p "$TEMP_DIR/.github/workflows"
+echo -e "$NEW_WORKFLOW_CONTENT" > "$TEMP_DIR/.github/workflows/sync.yml"
 cd "$TEMP_DIR" || exit
 git add .github/workflows/sync.yml
 if ! git diff-index --quiet HEAD; then
-    git commit -m "feat(workflow): Upgrade MonoMono sync logic"
+    git commit -m "fix(workflow): Repair and upgrade MonoMono sync logic"
     git push
 else
     echo "✔ Workflow ist bereits auf dem neuesten Stand."
@@ -122,5 +118,5 @@ fi
 cd - >/dev/null
 rm -rf "$TEMP_DIR"
 
-echo "✅ Workflow für '$FUSION_REPO' erfolgreich aktualisiert!"
-echo "   Führe 'monomono-update $FUSION_REPO' aus, um die Änderungen zu sehen."
+echo "✅ Workflow für '$FUSION_REPO' erfolgreich repariert!"
+echo "   Führe 'monomono-update $FUSION_REPO' aus, um einen neuen Sync-Lauf zu starten."
