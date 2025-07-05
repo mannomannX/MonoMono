@@ -264,10 +264,31 @@ if [[ "$ACTIVATE_WEBHOOKS" =~ ^[YyJj]$ ]]; then
 fi
 
 # 6. REPO ERSTELLEN & WORKFLOW PUSHEN
-echo "-> Erstelle Repo '$FUSION_REPO_NAME' und richte den Workflow ein..."
-gh repo create "$GITHUB_USER/$FUSION_REPO_NAME" "$VISIBILITY_FLAG" --description "Automatic fusion repo by MonoMono" >/dev/null || { echo "❌ Error creating repo."; exit 1; }
-echo -n "$PAT" | gh secret set ACCESS_TOKEN --repo "$GITHUB_USER/$FUSION_REPO_NAME" || { echo "❌ Fehler beim Setzen des Secrets."; exit 1; }
-echo "✔ Secret erfolgreich im Repository gespeichert."
+# 7. REPO ERSTELLEN & SECRET SETZEN
+echo "-> Creating repo '$FUSION_REPO_NAME' via API..."
+# Erstelle den JSON-Body für die API-Anfrage
+JSON_PAYLOAD=$(jq -n \
+                  --arg name "$FUSION_REPO_NAME" \
+                  --arg desc "Automatic fusion repo by MonoMono" \
+                  --argjson private_flag "$(if [ "$VISIBILITY_FLAG" == "--private" ]; then echo "true"; else echo "false"; fi)" \
+                  '{name: $name, description: $desc, private: $private_flag}')
+
+CREATE_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+     -X POST \
+     -H "Authorization: Bearer $GH_TOKEN" \
+     -H "Accept: application/vnd.github.v3+json" \
+     https://api.github.com/user/repos \
+     -d "$JSON_PAYLOAD")
+
+if [ "$CREATE_STATUS" -ne 201 ]; then
+    echo "❌ Fehler beim Erstellen des GitHub-Repos (HTTP-Status: $CREATE_STATUS)."
+    exit 1
+fi
+echo "✔ Repository erfolgreich erstellt."
+
+echo "-> Speichere den Token sicher als 'ACCESS_TOKEN' Secret im neuen Repo..."
+echo -n "$GH_TOKEN" | gh secret set ACCESS_TOKEN --repo "$GITHUB_USER/$FUSION_REPO_NAME" || { echo "❌ Fehler beim Setzen des Secrets."; exit 1; }
+echo "✔ Secret erfolgreich im Repository '$FUSION_REPO_NAME' gespeichert."
 
 WORKFLOW_NAME="Fusion-Repo Erstellen & Aktualisieren"
 ON_TRIGGERS="on:\n  workflow_dispatch:"
