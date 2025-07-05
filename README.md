@@ -1,4 +1,4 @@
-# MonoMono  आसान
+# MonoMono
 
 > "So good, they named it twice."
 
