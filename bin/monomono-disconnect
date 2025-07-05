@@ -1,8 +1,30 @@
 #!/bin/bash
-# MonoMono Disconnect-Skript v1.1
+# ==============================================================================
+# MonoMono Disconnect-Skript v1.2 (mit intelligenter PAT-Auth)
+# ==============================================================================
+CONFIG_FILE="$HOME/.monomono_config"
 
+# --- 1. LADE KONFIGURATION & AUTHENTIFIZIERE ---
+if [ -f "$CONFIG_FILE" ]; then
+    source "$CONFIG_FILE"
+fi
+
+if [ -z "$MONOMONO_PAT" ]; then
+    echo "--------------------------------------------------------------------"
+    echo "🔑 INFO: Ein persönlicher Zugriffstoken (PAT) wird benötigt, um aufzuräumen."
+    read -s -p "👉 Bitte füge einen gültigen Token hier ein und drücke ENTER: " PAT; echo
+    HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: token $PAT" https://api.github.com/user)
+    if [ "$HTTP_STATUS" -ne 200 ]; then
+        echo "❌ FEHLER: Der Token ist ungültig (HTTP-Status: $HTTP_STATUS)." >&2; exit 1
+    fi
+    MONOMONO_PAT=$PAT
+fi
+export GH_TOKEN=$MONOMONO_PAT
+echo "✔ Authentifizierung für diese Sitzung gesetzt."
+echo "--------------------------------------------------------------------"
+
+# --- 2. FÜHRE DISCONNECT AUS ---
 echo "MonoMono Disconnect Assistent"
-echo "--------------------------------"
 read -p "? Gib den Pfad zum Fusions-Repo ein (z.B. user/repo): " FUSION_REPO
 if [ -z "$FUSION_REPO" ]; then echo "❌ Fehler: Eingabe darf nicht leer sein."; exit 1; fi
 

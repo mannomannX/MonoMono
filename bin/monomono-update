@@ -5,19 +5,38 @@
 CONFIG_FILE="$HOME/.monomono_config"
 
 # --- 1. LADE KONFIGURATION & AUTHENTIFIZIERE ---
+# Prüfe, ob die Konfigurationsdatei und der PAT vorhanden sind
 if [ -f "$CONFIG_FILE" ]; then
     source "$CONFIG_FILE"
-    if [ -n "$MONOMONO_PAT" ]; then
-        export GH_TOKEN=$MONOMONO_PAT
-        echo "✔ Konfiguration und Token geladen."
-    else
-        echo "❌ Fehler: Kein PAT in der Konfiguration gefunden. Bitte führe 'monomono' zuerst aus." >&2
-        exit 1
-    fi
-else
-    echo "❌ Fehler: Keine Konfigurationsdatei gefunden. Bitte führe 'monomono' zuerst aus." >&2
-    exit 1
 fi
+
+# Wenn der PAT fehlt, starte den Erstellungs-Workflow
+if [ -z "$MONOMONO_PAT" ]; then
+    echo "--------------------------------------------------------------------"
+    echo "🔑 INFO: Ein persönlicher Zugriffstoken (PAT) wird für die Authentifizierung benötigt."
+    echo "‼️  AKTION ERFORDERLICH: Öffne https://github.com/settings/tokens/new"
+    echo "   Anleitung: Wähle die Scopes 'repo' UND 'workflow' aus, generiere den Token und kopiere ihn."
+    echo "--------------------------------------------------------------------"
+    PAT=""
+    while [ -z "$PAT" ]; do
+        read -s -p "👉 Bitte füge den kopierten Token hier ein und drücke ENTER: " PAT; echo
+    done
+    
+    # Validiere und speichere den neuen Token
+    echo "-> Überprüfe den Access Token..."
+    HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: token $PAT" https://api.github.com/user)
+    if [ "$HTTP_STATUS" -ne 200 ]; then
+        echo "❌ FEHLER: Der Token ist ungültig (HTTP-Status: $HTTP_STATUS)." >&2; exit 1
+    fi
+    echo "✔ Access Token ist gültig."
+    echo "MONOMONO_PAT='$PAT'" >> "$CONFIG_FILE"
+    MONOMONO_PAT=$PAT
+fi
+
+# Authentifiziere die aktuelle Sitzung mit dem Token
+export GH_TOKEN=$MONOMONO_PAT
+echo "✔ Authentifizierung für diese Sitzung gesetzt."
+echo "--------------------------------------------------------------------"
 
 # --- 2. WORKFLOW STARTEN ---
 if [ -z "$1" ]; then
