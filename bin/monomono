@@ -187,9 +187,6 @@ ON_TRIGGERS="on:\n  workflow_dispatch:"
 if [ -n "$CRON_SCHEDULE" ]; then
     ON_TRIGGERS+="\n$CRON_SCHEDULE"
 fi
-if $SETUP_WEBHOOKS; then
-    ON_TRIGGERS+="\n  repository_dispatch:\n    types: [monomono-sync-event]"
-fi
 
 read -r -d '' WORKFLOW_CONTENT << EOM
 name: '$WORKFLOW_NAME'
@@ -207,18 +204,19 @@ jobs:
 
       # ==============================================================================
       # ✨ HIER IST DER FINALE FIX ✨
-      # Wir löschen den alten Ordner (`rm -rf`), bevor wir die neue Version klonen.
-      # Das verhindert den "destination path already exists"-Fehler.
+      # Wir fügen `&& rm -rf \$folder_name/.git` wieder hinzu, um Submodules
+      # zu verhindern und die Repos als normale Ordner zu behandeln.
       # ==============================================================================
       - name: Clone sub-repos
         run: |
           git config --global url."https://x-access-token:\${{ secrets.ACCESS_TOKEN }}@github.com/".insteadOf "https://github.com/"
+          
           REPOS_TO_SYNC=\${{ inputs.repos || '$SUB_REPOS' }}
           for repo in \$(echo "\$REPOS_TO_SYNC" | sed 's/,/ /g'); do
             folder_name=\$(basename \$repo)
             echo "-> Cloning \$repo into \$folder_name..."
-            rm -rf \$folder_name
-            git clone --depth 1 https://github.com/\$repo.git \$folder_name
+            rm -rf "\$folder_name"
+            git clone --depth 1 https://github.com/\$repo.git "\$folder_name" && rm -rf "\$folder_name/.git"
           done
 
       - name: Create README and commit
