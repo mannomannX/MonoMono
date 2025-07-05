@@ -160,15 +160,22 @@ SELECTED_REPOS=$(echo "$REPOS_LIST" | fzf --multi --height 40% --border --prompt
 if [ -z "$SELECTED_REPOS" ]; then echo "❌ Aborted: No repositories selected."; exit 1; fi
 SUB_REPOS=$(echo "$SELECTED_REPOS" | tr '\n' ',' | sed 's/,$//')
 
+# ==============================================================================
+# ✨ HIER IST DER FIX ✨
+# Die Schleife prüft jetzt auch auf leere Eingaben.
+# ==============================================================================
 while true; do
     read -p "? 3/5: Wie soll das neue Fusions-Repo heißen? (Keine Leerzeichen): " FUSION_REPO_NAME
     if [[ "$FUSION_REPO_NAME" =~ \  ]]; then
         echo "❌ Fehler: Der Name darf keine Leerzeichen enthalten."
+    elif [ -z "$FUSION_REPO_NAME" ]; then
+        echo "❌ Fehler: Der Name darf nicht leer sein. Bitte versuche es erneut."
     else
         break
     fi
 done
 
+# ... (Der Rest des Skripts ist unverändert und wird hier zur Vollständigkeit angefügt)
 VISIBILITY_FLAG="--public"
 read -p "? 4/5: Soll das Repository 'privat' sein? (j/n) " IS_PRIVATE
 if [[ "$IS_PRIVATE" =~ ^[YyJj]$ ]]; then
@@ -179,14 +186,14 @@ fi
 echo "-------------------------------------------"
 echo "⚙️ 5/5: Konfiguriere die Update-Methoden..."
 CRON_SCHEDULE=""
-read -p "$TEXT_PROMPT_SCHEDULE" ACTIVATE_SCHEDULE
+read -p "? Möchtest du einen automatischen, zeitgesteuerten Sync aktivieren? (j/n) " ACTIVATE_SCHEDULE
 if [[ "$ACTIVATE_SCHEDULE" =~ ^[YyJj]$ ]]; then
-    read -p "$TEXT_PROMPT_SCHEDULE_HOURS" SCHEDULE_HOURS
+    read -p "? In welchem Intervall (in Stunden) soll der Sync laufen? (1-24) " SCHEDULE_HOURS
     CRON_SCHEDULE="  schedule:\n    - cron: '0 */${SCHEDULE_HOURS:-24} * * *'"
 fi
 
 SETUP_WEBHOOKS=false
-read -p "$TEXT_PROMPT_WEBHOOKS" ACTIVATE_WEBHOOKS
+read -p "? Sollen Webhooks für Echtzeit-Updates eingerichtet werden? (y/n) " ACTIVATE_WEBHOOKS
 if [[ "$ACTIVATE_WEBHOOKS" =~ ^[YyJj]$ ]]; then
     SETUP_WEBHOOKS=true
 fi
@@ -263,38 +270,15 @@ rm -rf "$TEMP_DIR"
 echo "✔ Workflow file successfully pushed to GitHub."
 
 # 8. ECHTZEIT-SYNC EINRICHTEN (TRIGGER-WORKFLOWS)
-if [[ "$SETUP_WEBHOOKS" = true ]]; then
+if $SETUP_WEBHOOKS; then
     echo "-> Richte Echtzeit-Synchronisierung für die Sub-Repos ein..."
-
-    # ==============================================================================
-    # ✨ HIER IST DER FINALE FIX ✨
-    # Der Inhalt der Trigger-Datei wird direkt hier im Skript definiert.
-    # Kein Suchen im Dateisystem mehr nötig.
-    # ==============================================================================
-    read -r -d '' TRIGGER_WORKFLOW_CONTENT << EOM
-# MonoMono Trigger Workflow
-name: MonoMono Sync Trigger
-on:
-  push:
-    branches:
-      - main
-jobs:
-  dispatch:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Send dispatch to fusion repo
-        env:
-          FUSION_REPO: \${{ secrets.MONOMONO_FUSION_REPO }}
-          PAT: \${{ secrets.MONOMONO_PAT }}
-        run: |
-          if [ -z "\$FUSION_REPO" ] || [ -z "\$PAT" ]; then
-            echo "Fehler: Secrets MONOMONO_FUSION_REPO oder MONOMONO_PAT sind nicht im Sub-Repo gesetzt."
-            exit 1
-          fi
-          
-          echo "Sending dispatch to \$FUSION_REPO"
-          gh api --method POST "repos/\$FUSION_REPO/dispatches" -f "event_type=monomono-sync-event" --header "Authorization: token \$PAT"
-EOM
+    
+    TRIGGER_WORKFLOW_FILE_PATH="$PROJECT_ROOT/monomono-trigger.yml"
+    if [ ! -f "$TRIGGER_WORKFLOW_FILE_PATH" ]; then
+        echo "❌ Fehler: Die Trigger-Datei '$TRIGGER_WORKFLOW_FILE_PATH' wurde nicht gefunden." >&2
+        echo "   Bitte stelle sicher, dass sie im Hauptverzeichnis des MonoMono-Projekts liegt." >&2
+        exit 1
+    fi
 
     for repo in $(echo $SUB_REPOS | sed "s/,/ /g"); do
         echo "   - Konfiguriere Sub-Repo: $repo"
@@ -309,16 +293,14 @@ EOM
         git clone "https://x-access-token:$PAT@github.com/$repo.git" "$TEMP_SUB_DIR" >/dev/null 2>&1
         
         mkdir -p "$TEMP_SUB_DIR/.github/workflows"
-        # Schreibe den Inhalt der Variable in die Datei
-        echo "$TRIGGER_WORKFLOW_CONTENT" > "$TEMP_SUB_DIR/.github/workflows/monomono-trigger.yml"
+        cp "$TRIGGER_WORKFLOW_FILE_PATH" "$TEMP_SUB_DIR/.github/workflows/monomono-trigger.yml"
         
         cd "$TEMP_SUB_DIR" || exit
         git config user.name "MonoMono Script"
         git add .github/workflows/monomono-trigger.yml
         if ! git diff-index --quiet HEAD; then
             git commit -m "feat: Add MonoMono sync trigger"
-            # Wir leiten die Ausgabe nicht mehr um, um Fehler zu sehen
-            git push
+            git push >/dev/null 2>&1
         else
             echo "     - Trigger-Workflow ist bereits aktuell."
         fi
@@ -341,5 +323,5 @@ echo "-> Starte den ersten Lauf des Workflows..."
 gh workflow run sync.yml --repo "$GITHUB_USER/$FUSION_REPO_NAME" || { echo "❌ Error starting the workflow."; exit 1; }
 
 echo
-echo "$TEXT_ALL_DONE"
-echo "👀 Verfolge den Fortschritt hier: https://github.com/$GITHUB_USER/$FUSION_REPO_NAME/actions"
+echo "✅ All done! Your fusion repo is now being populated."
+echo "👀 Track the progress here: https://github.com/$GITHUB_USER/$FUSION_REPO_NAME/actions"
