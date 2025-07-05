@@ -177,6 +177,11 @@ if [[ "$ACTIVATE_WEBHOOKS" =~ ^[YyJj]$ ]]; then
 fi
 
 # 7. REPO ERSTELLEN & WORKFLOW PUSHEN
+echo "-> Erstelle Repo '$FUSION_REPO_NAME' und richte den Workflow ein..."
+gh repo create "$GITHUB_USER/$FUSION_REPO_NAME" "$VISIBILITY_FLAG" --description "Automatic fusion repo by MonoMono" >/dev/null || { echo "❌ Error creating repo."; exit 1; }
+echo -n "$PAT" | gh secret set ACCESS_TOKEN --repo "$GITHUB_USER/$FUSION_REPO_NAME" || { echo "❌ Fehler beim Setzen des Secrets."; exit 1; }
+echo "✔ Secret erfolgreich im Repository gespeichert."
+
 WORKFLOW_NAME="Fusion-Repo Erstellen & Aktualisieren"
 ON_TRIGGERS="on:\n  workflow_dispatch:"
 if [ -n "$CRON_SCHEDULE" ]; then
