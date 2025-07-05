@@ -188,10 +188,6 @@ if [ -n "$CRON_SCHEDULE" ]; then
     ON_TRIGGERS+="\n$CRON_SCHEDULE"
 fi
 
-if $SETUP_WEBHOOKS; then
-    ON_TRIGGERS+="\n  repository_dispatch:\n    types: [monomono-sync-event]"
-fi
-
 read -r -d '' WORKFLOW_CONTENT << EOM
 name: '$WORKFLOW_NAME'
 $ON_TRIGGERS
@@ -206,11 +202,6 @@ jobs:
         with:
           token: \${{ secrets.ACCESS_TOKEN }}
 
-      # ==============================================================================
-      # ✨ HIER IST DER FINALE FIX ✨
-      # Wir fügen `&& rm -rf \$folder_name/.git` wieder hinzu, um Submodules
-      # zu verhindern und die Repos als normale Ordner zu behandeln.
-      # ==============================================================================
       - name: Clone sub-repos
         run: |
           git config --global url."https://x-access-token:\${{ secrets.ACCESS_TOKEN }}@github.com/".insteadOf "https://github.com/"
@@ -223,25 +214,56 @@ jobs:
             git clone --depth 1 https://github.com/\$repo.git "\$folder_name" && rm -rf "\$folder_name/.git"
           done
 
-      - name: Create README and commit
+      # ==============================================================================
+      # ✨ HIER IST DER NEUE, INTELLIGENTE README-SCHRITT ✨
+      # ==============================================================================
+      - name: Create intelligent README
         run: |
-          echo "# Fusion-Repo" > README.md
+          # Installiere 'tree', um eine visuelle Struktur anzuzeigen
+          sudo apt-get update && sudo apt-get install -y tree
+
+          # Generiere die README-Datei
+          echo "# 🤖 MonoMono Fusions-Repo" > README.md
           echo "" >> README.md
-          echo "This repository is an automatic fusion of the following projects:" >> README.md
+          echo "Dieses Repository ist eine automatisch generierte und synchronisierte Zusammenführung mehrerer einzelner Repositories, erstellt von [MonoMono](https://github.com/mannomannX/MonoMono)." >> README.md
+          echo "Es dient als zentraler Überblick und für übergreifende Analysen." >> README.md
+          echo "" >> README.md
+          echo "---" >> README.md
+          echo "" >> README.md
+          echo "## 🗺️ Projekt-Map" >> README.md
+          echo "" >> README.md
+          echo "### 🧩 Projekt-Komponenten" >> README.md
+          echo "Die folgenden Ordner sind die eigentlichen Projekt-Komponenten. Jede ist ein Klon eines eigenständigen Sub-Repos:" >> README.md
           for repo in \$(echo "\${{ inputs.repos || '$SUB_REPOS' }}" | sed 's/,/ /g'); do
-            echo "- [\$repo](https://github.com/\$repo)" >> README.md
+            echo "- **[\$(basename \$repo)](./\$(basename \$repo))** (Original: [\$repo](https://github.com/\$repo))" >> README.md
           done
           echo "" >> README.md
-          echo "Last update: \$(date)" >> README.md
-          
+          echo "### 🛠️ MonoMono-Infrastruktur" >> README.md
+          echo "Die folgenden Dateien und Ordner sind Teil der MonoMono-Automatisierung und nicht Teil der Kernprojekte:" >> README.md
+          echo "- **[.github/workflows/sync.yml](./.github/workflows/sync.yml)**: Der GitHub Actions Workflow, der dieses Repo aktuell hält." >> README.md
+          echo "" >> README.md
+          echo "### 🌳 Visuelle Verzeichnisstruktur" >> README.md
+          echo "\`\`\`" >> README.md
+          tree -L 2 -I 'README.md' >> README.md
+          echo "\`\`\`" >> README.md
+          echo "" >> README.md
+          echo "> Letzte Aktualisierung: \$(date)" >> README.md
+
+      - name: Commit and push changes
+        run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
-          git add .
+          git add README.md # Wir committen jetzt explizit nur die README
           if ! git diff-index --quiet HEAD; then
-            git commit -m "Fusion-Repo: Sync sub-repos"
+            # Prüfen, ob schon ein Commit mit "Sync" existiert, um Doppel-Commits zu vermeiden
+            if git log -1 --pretty=%B | grep -q "Fusion-Repo: Sync sub-repos"; then
+                git commit --amend --no-edit
+            else
+                git commit -m "docs: Update project map"
+            fi
             git push
           else
-            echo "No new changes found in sub-repos."
+            echo "Keine Änderungen an der README gefunden."
           fi
 EOM
 TEMP_DIR=$(mktemp -d)
