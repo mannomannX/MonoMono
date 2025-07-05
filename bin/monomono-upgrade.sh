@@ -1,34 +1,45 @@
 #!/bin/bash
 # ==============================================================================
-# MonoMono Upgrade-Skript v1.1 (Final)
+# MonoMono Upgrade-Skript v1.0
+# Aktualisiert den Workflow in einem bestehenden Fusions-Repo.
 # ==============================================================================
 CONFIG_FILE="$HOME/.monomono_config"
 
-# --- Function to ensure PAT is available ---
+# Funktion zur PAT-Abfrage, falls nicht in der Config gefunden
 ensure_pat() {
     if [ -f "$CONFIG_FILE" ]; then source "$CONFIG_FILE"; fi
     if [ -z "$MONOMONO_PAT" ]; then
+        echo "--------------------------------------------------------------------"
         echo "🔑 INFO: Ein persönlicher Zugriffstoken (PAT) wird für die Authentifizierung benötigt."
-        read -s -p "👉 Bitte füge einen gültigen Token mit 'repo' und 'workflow' Rechten hier ein: " PAT; echo
-        HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: token $PAT" https://api.github.com/user)
+        echo "‼️  AKTION ERFORDERLICH: Öffne https://github.com/settings/tokens/new"
+        echo "   Anleitung: Wähle die Scopes 'repo' UND 'workflow' aus, generiere den Token und kopiere ihn."
+        echo "--------------------------------------------------------------------"
+        PAT_INPUT=""
+        while [ -z "$PAT_INPUT" ]; do
+            read -s -p "👉 Bitte füge den kopierten Token hier ein und drücke ENTER: " PAT_INPUT; echo
+        done
+        
+        echo "-> Überprüfe den Access Token..."
+        HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: token $PAT_INPUT" https://api.github.com/user)
         if [ "$HTTP_STATUS" -ne 200 ]; then echo "❌ FEHLER: Der Token ist ungültig (HTTP-Status: $HTTP_STATUS)." >&2; exit 1; fi
-        echo "MONOMONO_PAT='$PAT'" >> "$CONFIG_FILE"
-        MONOMONO_PAT=$PAT
+        
+        echo "✔ Access Token ist gültig."
+        echo "MONOMONO_PAT='$PAT_INPUT'" >> "$CONFIG_FILE"
+        MONOMONO_PAT=$PAT_INPUT
     fi
     export GH_TOKEN=$MONOMONO_PAT
     echo "✔ Authentifizierung für diese Sitzung gesetzt."
 }
 
-# --- Main Logic ---
+# --- HAUPTLOGIK ---
 echo "MonoMono Workflow Upgrade Assistent"
 echo "-------------------------------------"
 read -p "? Welches Fusions-Repo soll aktualisiert werden? (user/repo): " FUSION_REPO
 if [ -z "$FUSION_REPO" ]; then echo "❌ Fehler: Eingabe darf nicht leer sein."; exit 1; fi
 
 ensure_pat
-GITHUB_USER=$(curl -s -H "Authorization: token $MONOMONO_PAT" https://api.github.com/user | jq -r '.login')
 
-# --- Extract existing configuration ---
+# Logik, um die Sub-Repos aus der alten Workflow-Datei zu extrahieren
 echo "-> Lese aktuelle Konfiguration aus dem Repo..."
 TEMP_DIR=$(mktemp -d)
 git clone "https://x-access-token:$MONOMONO_PAT@github.com/$FUSION_REPO.git" "$TEMP_DIR" >/dev/null 2>&1 || { echo "❌ Fehler beim Klonen des Repos."; rm -rf "$TEMP_DIR"; exit 1; }
@@ -36,19 +47,25 @@ git clone "https://x-access-token:$MONOMONO_PAT@github.com/$FUSION_REPO.git" "$T
 WORKFLOW_FILE_PATH="$TEMP_DIR/.github/workflows/sync.yml"
 if [ ! -f "$WORKFLOW_FILE_PATH" ]; then
     echo "❌ Fehler: Konnte keine 'sync.yml' im angegebenen Repository finden."
-    rm -rf "$TEMP_DIR"; exit 1
+    rm -rf "$TEMP_DIR"
+    exit 1
 fi
+
 SUB_REPOS_LINE=$(grep -m 1 'REPOS_TO_SYNC=' "$WORKFLOW_FILE_PATH")
 SUB_REPOS=$(echo "$SUB_REPOS_LINE" | sed -e "s/.*inputs.repos || '//" -e "s/' *}}//")
 if [ -z "$SUB_REPOS" ]; then
     echo "❌ Fehler: Konnte die Sub-Repo-Liste nicht aus dem bestehenden Workflow lesen."
-    rm -rf "$TEMP_DIR"; exit 1
+    rm -rf "$TEMP_DIR"
+    exit 1
 fi
 echo "✔ Gefundene Sub-Repos: $SUB_REPOS"
+
+# Ab hier verwenden wir die gleiche Logik wie in `monomono`, um den neuen Workflow zu generieren
+echo "-> Generiere den neuesten Workflow..."
+# Extrahiere die alten Trigger, um sie beizubehalten
 ON_TRIGGERS=$(sed -n '/^on:/,/^jobs:/p' "$WORKFLOW_FILE_PATH" | sed '$d')
 WORKFLOW_NAME="Fusion-Repo Erstellen & Aktualisieren"
 
-# --- Generate the new, corrected workflow content ---
 read -r -d '' NEW_WORKFLOW_CONTENT << EOM
 name: '$WORKFLOW_NAME'
 $ON_TRIGGERS
@@ -74,31 +91,32 @@ jobs:
           done
       - name: Create intelligent README
         run: |
-          sudo apt-get update >/dev/null && sudo apt-get install -y tree >/dev/null
-          echo "# 🤖 MonoMono Fusion Repo" > README.md
+          sudo apt-get update && sudo apt-get install -y tree
+          echo "# 🤖 MonoMono Fusions-Repo" > README.md
           echo "" >> README.md
-          echo "This repository is an automatically generated and synchronized fusion of multiple individual repositories, created by [MonoMono](https://github.com/mannomannX/MonoMono)." >> README.md
+          echo "Dieses Repository ist eine automatisch generierte und synchronisierte Zusammenführung mehrerer einzelner Repositories, erstellt von [MonoMono](https://github.com/mannomannX/MonoMono)." >> README.md
+          echo "Es dient als zentraler Überblick und für übergreifende Analysen." >> README.md
           echo "" >> README.md
           echo "---" >> README.md
           echo "" >> README.md
-          echo "## 🗺️ Project Map" >> README.md
+          echo "## 🗺️ Projekt-Map" >> README.md
           echo "" >> README.md
-          echo "### 🧩 Project Components" >> README.md
-          echo "The following folders are the core project components, each a clone of a standalone sub-repository:" >> README.md
+          echo "### 🧩 Projekt-Komponenten" >> README.md
+          echo "Die folgenden Ordner sind die eigentlichen Projekt-Komponenten. Jede ist ein Klon eines eigenständigen Sub-Repos:" >> README.md
           for repo in \$(echo "\${{ inputs.repos || '$SUB_REPOS' }}" | sed 's/,/ /g'); do
             echo "- **[\$(basename \$repo)](./\$(basename \$repo))** (Original: [\$repo](https://github.com/\$repo))" >> README.md
           done
           echo "" >> README.md
-          echo "### 🛠️ MonoMono Infrastructure" >> README.md
-          echo "The following files and folders are part of the MonoMono automation and not part of the core projects:" >> README.md
-          echo "- **[.github/workflows/sync.yml](./.github/workflows/sync.yml)**: The GitHub Actions workflow that keeps this repo up-to-date." >> README.md
+          echo "### 🛠️ MonoMono-Infrastruktur" >> README.md
+          echo "Die folgenden Dateien und Ordner sind Teil der MonoMono-Automatisierung und nicht Teil der Kernprojekte:" >> README.md
+          echo "- **[.github/workflows/sync.yml](./.github/workflows/sync.yml)**: Der GitHub Actions Workflow, der dieses Repo aktuell hält." >> README.md
           echo "" >> README.md
-          echo "### 🌳 Visual Directory Structure" >> README.md
+          echo "### 🌳 Visuelle Verzeichnisstruktur" >> README.md
           echo \`\`\` >> README.md
           tree -L 2 -I 'README.md' >> README.md
           echo \`\`\` >> README.md
           echo "" >> README.md
-          echo "> Last updated: \$(date)" >> README.md
+          echo "> Letzte Aktualisierung: \$(date)" >> README.md
       - name: Commit and push changes
         run: |
           git config --global user.name 'github-actions[bot]'
@@ -112,17 +130,13 @@ jobs:
           fi
 EOM
 
-# --- Push the new workflow to the repo ---
-echo "-> Pushe neuen Workflow nach '$FUSION_REPO'..."
 echo -e "$NEW_WORKFLOW_CONTENT" > "$WORKFLOW_FILE_PATH"
 cd "$TEMP_DIR" || exit
 git add .github/workflows/sync.yml
-if ! git diff-index --quiet HEAD; then
-    git commit -m "feat(workflow): Upgrade MonoMono sync logic"
-    git push
-fi
+git commit -m "feat(workflow): Upgrade MonoMono sync logic"
+git push
 cd - >/dev/null
 rm -rf "$TEMP_DIR"
 
-echo "✅ Workflow für '$FUSION_REPO' erfolgreich aktualisiert!"
+echo "✅ Workflow für '$FUSION_REPO' erfolgreich auf die neueste Version aktualisiert!"
 echo "   Führe 'monomono-update $FUSION_REPO' aus, um die Änderungen (wie die neue README) zu sehen."
