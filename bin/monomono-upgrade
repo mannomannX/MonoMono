@@ -1,17 +1,21 @@
 #!/bin/bash
 # ==============================================================================
-# MonoMono Upgrade-Skript v2.0 (intelligent & final)
+# MonoMono Upgrade-Skript v2.1 (mit intelligenter Fallback-Logik)
+# ==============================================================================
+# Aktualisiert den Workflow in einem bestehenden Fusions-Repo und nutzt dabei
+# mehrere Methoden, um die Konfiguration auch aus alten Repos zu erkennen.
 # ==============================================================================
 CONFIG_FILE="$HOME/.monomono_config"
 
 # --- Funktion zur PAT-Abfrage ---
 ensure_pat() {
+    # ... (Diese Funktion bleibt unverändert)
     if [ -f "$CONFIG_FILE" ]; then source "$CONFIG_FILE"; fi
     if [ -z "$MONOMONO_PAT" ]; then
-        echo "🔑 Ein persönlicher Zugriffstoken (PAT) wird benötigt."
+        echo "🔑 INFO: Ein persönlicher Zugriffstoken (PAT) wird für die Authentifizierung benötigt."
         read -s -p "👉 Bitte füge einen gültigen Token mit 'repo' und 'workflow' Rechten hier ein: " PAT; echo
         HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: token $PAT" https://api.github.com/user)
-        if [ "$HTTP_STATUS" -ne 200 ]; then echo "❌ FEHLER: Der Token ist ungültig." >&2; exit 1; fi
+        if [ "$HTTP_STATUS" -ne 200 ]; then echo "❌ FEHLER: Der Token ist ungültig (HTTP-Status: $HTTP_STATUS)." >&2; exit 1; fi
         echo "MONOMONO_PAT='$PAT'" >> "$CONFIG_FILE"
         MONOMONO_PAT=$PAT
     fi
@@ -21,29 +25,62 @@ ensure_pat() {
 
 # --- HAUPTLOGIK ---
 echo "MonoMono Workflow Upgrade-Assistent"
-echo "-----------------------------------"
+echo "-------------------------------------"
 read -p "? Welches Fusions-Repo soll aktualisiert werden? (user/repo): " FUSION_REPO
 if [ -z "$FUSION_REPO" ]; then echo "❌ Fehler: Eingabe darf nicht leer sein."; exit 1; fi
 
 ensure_pat
+GITHUB_USER=$(curl -s -H "Authorization: token $MONOMONO_PAT" https://api.github.com/user | jq -r '.login')
 
-# --- Extrahiere bestehende Konfiguration ---
+# --- Intelligente Sub-Repo-Erkennung mit Fallbacks ---
 echo "-> Analysiere das Repository '$FUSION_REPO'..."
 TEMP_DIR=$(mktemp -d)
 git clone "https://x-access-token:$MONOMONO_PAT@github.com/$FUSION_REPO.git" "$TEMP_DIR" >/dev/null 2>&1 || { echo "❌ Fehler beim Klonen des Repos."; rm -rf "$TEMP_DIR"; exit 1; }
 
 WORKFLOW_FILE_PATH="$TEMP_DIR/.github/workflows/sync.yml"
-if [ ! -f "$WORKFLOW_FILE_PATH" ]; then
-    echo "❌ Fehler: Konnte keine 'sync.yml' im Repository finden."
-    rm -rf "$TEMP_DIR"; exit 1
+SUB_REPOS=""
+
+# VERSUCH 1: Aus dem Workflow parsen
+if [ -f "$WORKFLOW_FILE_PATH" ]; then
+    SUB_REPOS_LINE=$(grep -m 1 'REPOS_TO_SYNC=' "$WORKFLOW_FILE_PATH")
+    SUB_REPOS=$(echo "$SUB_REPOS_LINE" | sed -e "s/.*inputs.repos || '//" -e "s/' *}}//")
 fi
-SUB_REPOS_LINE=$(grep -m 1 'REPOS_TO_SYNC=' "$WORKFLOW_FILE_PATH")
-SUB_REPOS=$(echo "$SUB_REPOS_LINE" | sed -e "s/.*inputs.repos || '//" -e "s/' *}}//")
+
+# FALLBACK 1: Aus der Verzeichnisstruktur ableiten
 if [ -z "$SUB_REPOS" ]; then
-    echo "❌ Fehler: Konnte die Sub-Repo-Liste nicht aus dem bestehenden Workflow lesen."
-    rm -rf "$TEMP_DIR"; exit 1
+    echo "⚠️ Konnte Sub-Repos nicht aus dem Workflow lesen. Versuche Analyse der Verzeichnisstruktur..."
+    # Finde alle Ordner auf der obersten Ebene, ignoriere ".github"
+    SUB_REPO_NAMES=$(find "$TEMP_DIR" -maxdepth 1 -mindepth 1 -type d -not -path '*/.git*' -not -path '*/.github*' -exec basename {} \;)
+    
+    if [ -n "$SUB_REPO_NAMES" ]; then
+        echo "✔ Folgende potenzielle Sub-Repo-Ordner gefunden: $SUB_REPO_NAMES"
+        read -p "? Welchem GitHub-Benutzer oder welcher Organisation gehören diese Repos? (Standard: $GITHUB_USER): " SUB_REPO_OWNER
+        SUB_REPO_OWNER=${SUB_REPO_OWNER:-$GITHUB_USER}
+
+        # Baue die vollständigen Namen zusammen (user/repo)
+        for name in $SUB_REPO_NAMES; do
+            if [ -z "$SUB_REPOS" ]; then
+                SUB_REPOS="$SUB_REPO_OWNER/$name"
+            else
+                SUB_REPOS="$SUB_REPOS,$SUB_REPO_OWNER/$name"
+            fi
+        done
+    fi
 fi
-echo "✔ Verbundene Sub-Repos erfolgreich erkannt: $SUB_REPOS"
+
+# FALLBACK 2: Manuelle Eingabe
+if [ -z "$SUB_REPOS" ]; then
+    echo "❌ Konnte Sub-Repos nicht automatisch erkennen."
+    read -p "? Bitte gib die zugehörigen Sub-Repos manuell ein (user/repo1,user/repo2,...): " SUB_REPOS
+fi
+
+if [ -z "$SUB_REPOS" ]; then
+    echo "❌ Fehler: Keine Sub-Repos angegeben. Abbruch."
+    rm -rf "$TEMP_DIR"
+    exit 1
+fi
+
+echo "✔ Konfiguration für Upgrade erfolgreich geladen. Verbundene Repos: $SUB_REPOS"
 ON_TRIGGERS=$(sed -n '/^on:/,/^jobs:/p' "$WORKFLOW_FILE_PATH" | sed '$d')
 
 # --- Generiere den neuen, korrekten Workflow-Inhalt ---
