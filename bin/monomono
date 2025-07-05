@@ -103,36 +103,28 @@ ensure_app_configured() {
 # Funktion zur Authentifizierung als App und zum Abrufen eines Installationstokens
 get_installation_token() {
     APP_ID=$(jq -r '.app_id' "$CONFIG_FILE")
-    APP_NAME=$(jq -r '.app_name' "$CONFIG_FILE")
     PRIVATE_KEY_PATH=$(jq -r '.private_key_path' "$CONFIG_FILE")
-    
-    JWT=$(gh auth token --app-id "$APP_ID" --private-key "$PRIVATE_KEY_PATH")
-    
-    # Versuche, die Installations-ID zu finden
+    GITHUB_USER=$(jq -r '.github_user' "$CONFIG_FILE")
+
+    # Erstelle Header und Payload für das JWT
+    NOW=$(date +%s)
+    IAT=$(($NOW - 60))
+    EXP=$(($NOW + 600))
+    HEADER_B64=$(echo -n '{"alg":"RS256","typ":"JWT"}' | base64 | tr -d '\n' | tr -d '=' | tr '/+' '_-')
+    PAYLOAD_B64=$(echo -n "{\"iat\":$IAT,\"exp\":$EXP,\"iss\":\"$APP_ID\"}" | base64 | tr -d '\n' | tr -d '=' | tr '/+' '_-')
+
+    # Signiere das JWT mit dem privaten Schlüssel
+    SIGNATURE_B64=$(openssl dgst -sha256 -sign "$PRIVATE_KEY_PATH" <(echo -n "$HEADER_B64.$PAYLOAD_B64") | base64 | tr -d '\n' | tr -d '=' | tr '/+' '_-')
+    JWT="$HEADER_B64.$PAYLOAD_B64.$SIGNATURE_B64"
+
+    # Finde die Installations-ID für den Benutzer-Account
     INSTALLATION_ID=$(curl -s -H "Authorization: Bearer $JWT" -H "Accept: application/vnd.github.v3+json" https://api.github.com/app/installations | jq ".[] | select(.account.login==\"$GITHUB_USER\") | .id")
 
-    # Wenn die App nicht installiert ist, starte den Anleitungs-Loop
-    while [ -z "$INSTALLATION_ID" ]; do
-        echo "--------------------------------------------------------------------"
-        echo "⚠️  AKTION ERFORDERLICH: Die App '$APP_NAME' ist noch nicht installiert."
-        echo "   Bitte öffne den folgenden Link, um die App für deinen Account zu installieren:"
-        echo
-        echo "       https://github.com/settings/apps/$APP_NAME/installations"
-        echo
-        echo "   Wähle dort 'All repositories' aus und klicke auf 'Install'."
-        read -p "? Drücke ENTER, nachdem du die Installation im Browser abgeschlossen hast..."
-
-        echo "-> Prüfe erneut auf erfolgreiche Installation..."
-        sleep 3 # Kurze Pause, damit GitHub die Installation verarbeiten kann
-        INSTALLATION_ID=$(curl -s -H "Authorization: Bearer $JWT" -H "Accept: application/vnd.github.v3+json" https://api.github.com/app/installations | jq ".[] | select(.account.login==\"$GITHUB_USER\") | .id")
-        
-        if [ -z "$INSTALLATION_ID" ]; then
-            echo "❌ Immer noch nicht gefunden. Versuchen wir es in 5 Sekunden erneut."
-            sleep 5
-        fi
-    done
-    
-    echo "✔ App-Installation erfolgreich erkannt."
+    if [ -z "$INSTALLATION_ID" ]; then
+        echo "❌ Fehler: Die App ist nicht für deinen Account '$GITHUB_USER' installiert."
+        echo "   Gehe zu https://github.com/settings/apps, wähle deine App aus und installiere sie."
+        exit 1
+    fi
 
     # Erstelle einen kurzlebigen Installation-Token
     INSTALLATION_TOKEN=$(curl -s -X POST -H "Authorization: Bearer $JWT" -H "Accept: application/vnd.github.v3+json" "https://api.github.com/app/installations/$INSTALLATION_ID/access_tokens" | jq -r '.token')
