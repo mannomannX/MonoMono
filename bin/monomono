@@ -1,38 +1,114 @@
 #!/bin/bash
 # ==============================================================================
-# MONOMONO - HAUPTSKRIPT (v10.0 - Konsolidiert & Final)
+# MONOMONO - HAUPTSKRIPT (v11.0 - GitHub App Architektur)
 # ==============================================================================
-# Dieses Skript ist komplett in sich geschlossen. Der Inhalt für den
-# Trigger-Workflow ist direkt hier eingebettet.
+# Dieses Skript nutzt eine private GitHub App für eine robuste und sichere
+# Automatisierung. Es führt den Benutzer durch ein einmaliges Setup.
 # ==============================================================================
 
-# --- Konfiguration & Befehlslogik ---
-CONFIG_FILE="$HOME/.monomono_config"
+# --- Konfiguration & globale Variablen ---
+CONFIG_DIR="$HOME/.monomono"
+CONFIG_FILE="$CONFIG_DIR/config.json"
 
-# Verarbeite Befehle wie --help oder --reset und beende das Skript danach
+# --- Befehlslogik (Hilfe & Reset) ---
 case "$1" in
     --help|-h)
         echo "MonoMono Assistent - Ein Werkzeug zum Erstellen von Fusions-Repos."
-        echo
-        echo "Verwendung:"
-        echo "  monomono           - Startet den interaktiven Assistenten."
-        echo "  monomono --reset   - Löscht den gespeicherten GitHub-Benutzernamen."
-        echo "  monomono --help    - Zeigt diese Hilfe an."
+        echo "Verwendung: monomono | monomono --reset | monomono --help"
         exit 0
         ;;
     --reset)
-        if [ -f "$CONFIG_FILE" ]; then
-            rm "$CONFIG_FILE"
-            echo "✔ Gespeicherter Benutzername wurde zurückgesetzt."
+        if [ -d "$CONFIG_DIR" ]; then
+            rm -rf "$CONFIG_DIR"
+            echo "✔ MonoMono-Konfiguration vollständig zurückgesetzt."
         else
-            echo "ℹ Es war kein Benutzername zum Zurücksetzen gespeichert."
+            echo "ℹ Es war keine Konfiguration zum Zurücksetzen vorhanden."
         fi
         exit 0
         ;;
 esac
 
-# Lade Sprach- und Hilfsdateien, falls vorhanden
-# (Diese Logik ist für zukünftige Erweiterungen vorbereitet)
+# --- Hilfsfunktionen ---
+# Funktion, um sicherzustellen, dass die App konfiguriert ist
+ensure_app_configured() {
+    if [ -f "$CONFIG_FILE" ] && \
+       jq -e '.app_id' "$CONFIG_FILE" >/dev/null 2>&1 && \
+       jq -e '.private_key_path' "$CONFIG_FILE" >/dev/null 2>&1; then
+        echo "✔ MonoMono App-Konfiguration gefunden."
+        return 0
+    fi
+
+    # --- APP-SETUP-WIZARD ---
+    echo "--------------------------------------------------------------------"
+    echo "🔑 INFO: EINMALIGES APP-SETUP NÖTIG"
+    echo "MonoMono benötigt eine private 'Bot'-App für eine sichere & stabile Verbindung."
+    echo "Das ist eine einmalige Einrichtung, die ca. 3 Minuten dauert."
+    echo "--------------------------------------------------------------------"
+    read -p "? Drücke ENTER, um die GitHub-Seite zur App-Erstellung zu öffnen..."
+
+    echo "‼️  AKTION ERFORDERLICH: Bitte öffne diese URL in deinem lokalen Browser:"
+    echo "    https://github.com/settings/apps/new"
+    
+    echo
+    echo "--- ANLEITUNG IM BROWSER ---"
+    echo "1. App name:         Gib einen Namen ein (z.B. 'Meine-MonoMono-App')"
+    echo "2. Homepage URL:     https://github.com/mannomannX/MonoMono"
+    echo "3. Webhook:          Lasse dieses Feld komplett leer (wichtig!)"
+    echo "4. Permissions -> Repository permissions:"
+    echo "   - Actions:       Read & write"
+    echo "   - Contents:      Read & write"
+    echo "   - Administration:Read & write (für Secrets & Webhooks)"
+    echo "5. Klicke ganz unten auf 'Create GitHub App'."
+    echo "-------------------------------------------"
+    
+    read -p "? Drücke ENTER, nachdem du die App erstellt hast..."
+
+    echo
+    echo "--- DATEN SAMMELN ---"
+    echo "Du befindest dich nun auf der Einstellungsseite deiner neuen App."
+    read -p "? Bitte gib deine 'App ID' ein (steht oben auf der Seite): " NEW_APP_ID
+    
+    echo "Jetzt generiere einen 'Private Key':"
+    echo "1. Klicke auf 'Generate a private key'."
+    echo "2. Eine .pem-Datei wird heruntergeladen."
+    read -p "? Bitte gib den vollständigen Pfad zu dieser .pem-Datei ein: " NEW_PRIVATE_KEY_PATH
+
+    mkdir -p "$CONFIG_DIR"
+    echo "{\"app_id\":\"$NEW_APP_ID\",\"private_key_path\":\"$NEW_PRIVATE_KEY_PATH\"}" > "$CONFIG_FILE"
+    
+    echo "✅ App-Konfiguration erfolgreich gespeichert in $CONFIG_FILE!"
+    echo "--------------------------------------------------------------------"
+}
+
+# Funktion zur Authentifizierung als App und zum Abrufen eines Installationstokens
+get_installation_token() {
+    APP_ID=$(jq -r '.app_id' "$CONFIG_FILE")
+    PRIVATE_KEY_PATH=$(jq -r '.private_key_path' "$CONFIG_FILE")
+    
+    # Erstelle ein JWT (JSON Web Token)
+    JWT=$(gh auth token -a "$APP_ID" -p "$PRIVATE_KEY_PATH")
+    
+    # Finde die Installations-ID für den Benutzer-Account
+    INSTALLATION_ID=$(curl -s -X GET -H "Authorization: Bearer $JWT" -H "Accept: application/vnd.github.v3+json" https://api.github.com/app/installations | jq ".[] | select(.account.login==\"$GITHUB_USER\") | .id")
+
+    if [ -z "$INSTALLATION_ID" ]; then
+        echo "❌ Fehler: Die MonoMono-App ist nicht für deinen Account '$GITHUB_USER' installiert."
+        echo "   Gehe zu https://github.com/settings/apps/deine-app-name/installations und installiere sie."
+        exit 1
+    fi
+
+    # Erstelle einen kurzlebigen Installation-Token
+    INSTALLATION_TOKEN=$(curl -s -X POST -H "Authorization: Bearer $JWT" -H "Accept: application/vnd.github.v3+json" "https://api.github.com/app/installations/$INSTALLATION_ID/access_tokens" | jq -r '.token')
+    
+    if [ -z "$INSTALLATION_TOKEN" ]; then
+        echo "❌ Fehler beim Erstellen des Installation-Tokens."
+        exit 1
+    fi
+
+    # Exportiere den Token für alle folgenden gh- und git-Befehle
+    export GH_TOKEN=$INSTALLATION_TOKEN
+    echo "✔ Erfolgreich als MonoMono-App authentifiziert."
+}
 
 # --- HAUPTLOGIK ---
 
@@ -82,57 +158,22 @@ fi
 # --- ARBEITS-MODUS ---
 echo "✔ System ready. All tools found."
 
-# 2. GITHUB-LOGIN & RECHTE-PRÜFUNG
-NEEDS_REAUTH=false
-if ! gh auth status &>/dev/null; then
-    NEEDS_REAUTH=true
-else
-    TOKEN_STATUS=$(gh auth status -t 2>&1)
-    if ! echo "$TOKEN_STATUS" | grep -q "repo" || ! echo "$TOKEN_STATUS" | grep -q "workflow"; then
-        NEEDS_REAUTH=true
-        echo "⚠️  WARNUNG: Deinem aktuellen GitHub-Login fehlen die benötigten Rechte (repo, workflow)."
-    fi
-fi
-if $NEEDS_REAUTH; then
-    echo "--------------------------------------------------------------------"
-    echo "ℹ️  Ein Login mit erweiterten Rechten ('repo', 'workflow') ist nötig."
-    read -p "? Drücke ENTER, um den Anmelde-Prozess zu starten..."
-    unset GITHUB_TOKEN
-    gh auth login --scopes repo,workflow
-fi
-if ! gh auth status &>/dev/null; then echo "❌ Login fehlgeschlagen."; exit 1; fi
-echo "✔ Erfolgreich bei GitHub angemeldet."
+# 1. App-Konfiguration sicherstellen
+ensure_app_configured
 
-# 3. BENUTZERNAME LADEN/SPEICHERN
-if [ -f "$CONFIG_FILE" ]; then
-    source "$CONFIG_FILE"
+# 2. GITHUB-BENUTZERNAME LADEN/SPEICHERN
+if [ -f "$CONFIG_FILE" ] && jq -e '.github_user' "$CONFIG_FILE" >/dev/null 2>&1; then
+    GITHUB_USER=$(jq -r '.github_user' "$CONFIG_FILE")
 else
-    read -p "? Please enter your GitHub username: " GITHUB_USER
-    echo "GITHUB_USER=\"$GITHUB_USER\"" > "$CONFIG_FILE"
+    read -p "? Bitte gib deinen GitHub-Benutzernamen ein: " GITHUB_USER
+    jq --arg user "$GITHUB_USER" '.github_user = $user' "$CONFIG_FILE" > tmp.$$.json && mv tmp.$$.json "$CONFIG_FILE"
 fi
 echo "ℹ Angemeldet als Benutzer: $GITHUB_USER"
 
-# 4. AUTHENTIFIZIERUNG MIT PERSONAL ACCESS TOKEN (PAT)
-echo "--------------------------------------------------------------------"
-echo "🔑 INFO: Ein persönlicher Zugriffstoken (PAT) wird benötigt."
-read -s -p "👉 Bitte füge den kopierten Token hier ein und drücke ENTER: " PAT; echo
+# 3. Als App authentifizieren
+get_installation_token
 
-# Token-Validierung mit cURL...
-HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: token $PAT" https://api.github.com/user)
-if [ "$HTTP_STATUS" -ne 200 ]; then
-    echo "❌ FEHLER: Der Token ist ungültig (HTTP-Status: $HTTP_STATUS)." >&2; exit 1
-fi
-VALIDATED_USER=$(curl -s -H "Authorization: token $PAT" https://api.github.com/user | jq -r '.login')
-echo "✔ Access Token ist gültig für Benutzer '$VALIDATED_USER'."
-
-# ==============================================================================
-# ✨ HIER IST DER FIX ✨
-# Wir speichern den PAT jetzt in die Konfigurationsdatei.
-# ==============================================================================
-echo "MONOMONO_PAT='$PAT'" >> "$CONFIG_FILE"
-export GH_TOKEN=$PAT
-
-# 5. PROJEKT-SETUP
+# 4. PROJEKT-SETUP
 echo "-------------------------------------------"
 echo "🚀 Starte den Assistenten..."
 echo "1/5: Lade Repositories via API..."
@@ -161,7 +202,7 @@ if [[ "$IS_PRIVATE" =~ ^[YyJj]$ ]]; then
     VISIBILITY_FLAG="--private"
 fi
 
-# 6. UPDATE-OPTIONEN
+# 5. UPDATE-OPTIONEN
 echo "-------------------------------------------"
 echo "⚙️ 5/5: Konfiguriere die Update-Methoden..."
 CRON_SCHEDULE=""
@@ -177,7 +218,7 @@ if [[ "$ACTIVATE_WEBHOOKS" =~ ^[YyJj]$ ]]; then
     SETUP_WEBHOOKS=true
 fi
 
-# 7. REPO ERSTELLEN & WORKFLOW PUSHEN
+# 6. REPO ERSTELLEN & WORKFLOW PUSHEN
 echo "-> Erstelle Repo '$FUSION_REPO_NAME' und richte den Workflow ein..."
 gh repo create "$GITHUB_USER/$FUSION_REPO_NAME" "$VISIBILITY_FLAG" --description "Automatic fusion repo by MonoMono" >/dev/null || { echo "❌ Error creating repo."; exit 1; }
 echo -n "$PAT" | gh secret set ACCESS_TOKEN --repo "$GITHUB_USER/$FUSION_REPO_NAME" || { echo "❌ Fehler beim Setzen des Secrets."; exit 1; }
@@ -260,7 +301,7 @@ cd - >/dev/null
 rm -rf "$TEMP_DIR"
 echo "✔ Workflow file successfully pushed to GitHub."
 
-# 8. ECHTZEIT-SYNC EINRICHTEN (TRIGGER-WORKFLOWS)
+# 7. ECHTZEIT-SYNC EINRICHTEN (TRIGGER-WORKFLOWS)
 if [[ "$SETUP_WEBHOOKS" = true ]]; then
     echo "-> Richte Echtzeit-Synchronisierung für die Sub-Repos ein..."
 
@@ -321,7 +362,7 @@ EOM
     done
 fi
 
-# 9. WORKFLOW STARTEN
+# 8. WORKFLOW STARTEN
 echo "-> Warte, bis der Workflow auf GitHub sichtbar ist..."
 WORKFLOW_FOUND=false
 for i in {1..5}; do
