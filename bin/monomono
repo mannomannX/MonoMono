@@ -263,8 +263,7 @@ if [[ "$ACTIVATE_WEBHOOKS" =~ ^[YyJj]$ ]]; then
     SETUP_WEBHOOKS=true
 fi
 
-# 6. REPO ERSTELLEN & WORKFLOW PUSHEN
-# 7. REPO ERSTELLEN & SECRET SETZEN
+# 6. REPO ERSTELLEN & SECRET SETZEN
 echo "-> Creating repo '$FUSION_REPO_NAME' via API..."
 # Erstelle den JSON-Body für die API-Anfrage
 JSON_PAYLOAD=$(jq -n \
