@@ -1,8 +1,7 @@
 #!/bin/bash
 # ==============================================================================
-# MonoMono Installationsskript v3.0 (vereinfacht)
+# MonoMono Installationsskript v3.0 (final & einfach)
 # ==============================================================================
-
 INSTALL_DIR="/usr/local/bin"
 
 if [ ! -d "$INSTALL_DIR" ] || [ ! -w "$INSTALL_DIR" ]; then
@@ -13,10 +12,12 @@ fi
 
 echo "Installiere MonoMono-Befehle nach $INSTALL_DIR..."
 
-# Kopiere die ausführbaren Skripte in den Systempfad
+# Kopiere alle ausführbaren Skripte in den Systempfad
 for cmd in monomono monomono-update monomono-disconnect; do
+    # Wir nehmen an, dass das install.sh aus dem Projekt-Root ausgeführt wird
     if [ ! -f "bin/$cmd" ]; then
         echo "❌ Fehler: Die Skript-Datei 'bin/$cmd' wurde nicht gefunden." >&2
+        echo "   Bitte führe das Skript aus dem MonoMono-Hauptverzeichnis aus." >&2
         exit 1
     fi
     cp "bin/$cmd" "$INSTALL_DIR/$cmd"
