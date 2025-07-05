@@ -115,20 +115,21 @@ echo "ℹ Angemeldet als Benutzer: $GITHUB_USER"
 # 4. AUTHENTIFIZIERUNG MIT PERSONAL ACCESS TOKEN (PAT)
 echo "--------------------------------------------------------------------"
 echo "🔑 INFO: Ein persönlicher Zugriffstoken (PAT) wird benötigt."
-echo "‼️  AKTION ERFORDERLICH: Öffne https://github.com/settings/tokens/new"
-echo "   Anleitung: Wähle die Scopes 'repo' UND 'workflow' aus, generiere den Token und kopiere ihn."
-echo "--------------------------------------------------------------------"
-PAT=""
-while [ -z "$PAT" ]; do
-    read -s -p "👉 Bitte füge den kopierten Token hier ein und drücke ENTER: " PAT; echo
-done
-echo "-> Überprüfe den Access Token..."
+read -s -p "👉 Bitte füge den kopierten Token hier ein und drücke ENTER: " PAT; echo
+
+# Token-Validierung mit cURL...
 HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: token $PAT" https://api.github.com/user)
 if [ "$HTTP_STATUS" -ne 200 ]; then
     echo "❌ FEHLER: Der Token ist ungültig (HTTP-Status: $HTTP_STATUS)." >&2; exit 1
 fi
 VALIDATED_USER=$(curl -s -H "Authorization: token $PAT" https://api.github.com/user | jq -r '.login')
 echo "✔ Access Token ist gültig für Benutzer '$VALIDATED_USER'."
+
+# ==============================================================================
+# ✨ HIER IST DER FIX ✨
+# Wir speichern den PAT jetzt in die Konfigurationsdatei.
+# ==============================================================================
+echo "MONOMONO_PAT='$PAT'" >> "$CONFIG_FILE"
 export GH_TOKEN=$PAT
 
 # 5. PROJEKT-SETUP

@@ -1,42 +1,30 @@
 #!/bin/bash
 # ==============================================================================
-# MonoMono Update-Skript v2.0 (mit intelligenter Auth-Prüfung)
+# MonoMono Update-Skript v2.1 (mit intelligenter PAT-Auth)
 # ==============================================================================
+CONFIG_FILE="$HOME/.monomono_config"
 
-# --- 1. GITHUB-LOGIN & RECHTE-PRÜFUNG ---
-NEEDS_REAUTH=false
-if ! gh auth status &>/dev/null; then
-    NEEDS_REAUTH=true
-else
-    TOKEN_STATUS=$(gh auth status -t 2>&1)
-    if ! echo "$TOKEN_STATUS" | grep -q "repo" || ! echo "$TOKEN_STATUS" | grep -q "workflow"; then
-        NEEDS_REAUTH=true
-        echo "⚠️  WARNUNG: Deinem aktuellen GitHub-Login fehlen die benötigten Rechte (repo, workflow)."
+# --- 1. LADE KONFIGURATION & AUTHENTIFIZIERE ---
+if [ -f "$CONFIG_FILE" ]; then
+    source "$CONFIG_FILE"
+    if [ -n "$MONOMONO_PAT" ]; then
+        export GH_TOKEN=$MONOMONO_PAT
+        echo "✔ Konfiguration und Token geladen."
+    else
+        echo "❌ Fehler: Kein PAT in der Konfiguration gefunden. Bitte führe 'monomono' zuerst aus." >&2
+        exit 1
     fi
-fi
-
-if $NEEDS_REAUTH; then
-    echo "--------------------------------------------------------------------"
-    echo "ℹ️  Ein Login mit erweiterten Rechten ('repo', 'workflow') ist nötig, um den Update-Prozess zu starten."
-    read -p "? Drücke ENTER, um den Anmelde-Prozess zu starten..."
-    gh auth login --scopes repo,workflow
-fi
-
-if ! gh auth status &>/dev/null; then
-    echo "❌ Login fehlgeschlagen. Breche ab."
+else
+    echo "❌ Fehler: Keine Konfigurationsdatei gefunden. Bitte führe 'monomono' zuerst aus." >&2
     exit 1
 fi
-echo "✔ Erfolgreich bei GitHub angemeldet."
-echo "--------------------------------------------------------------------"
-
 
 # --- 2. WORKFLOW STARTEN ---
 if [ -z "$1" ]; then
-  echo "❌ Fehler: Du musst den Pfad zum Fusions-Repo angeben."
-  echo "   Beispiel: monomono-update dein-name/dein-fusions-repo"
+  echo "❌ Fehler: Du musst den Pfad zum Fusions-Repo angeben." >&2
+  echo "   Beispiel: monomono-update dein-name/dein-fusions-repo" >&2
   exit 1
 fi
-
 REPO_PATH=$1
 
 echo "ℹ️ Starte den Update-Workflow für das Repo: $REPO_PATH"
