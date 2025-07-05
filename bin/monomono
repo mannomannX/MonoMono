@@ -287,7 +287,32 @@ fi
 echo "✔ Repository erfolgreich erstellt."
 
 echo "-> Speichere den Token sicher als 'ACCESS_TOKEN' Secret im neuen Repo..."
-echo -n "$GH_TOKEN" | gh secret set ACCESS_TOKEN --repo "$GITHUB_USER/$FUSION_REPO_NAME" || { echo "❌ Fehler beim Setzen des Secrets."; exit 1; }
+# 1. Get the public key for the repository
+PUBLIC_KEY_RESPONSE=$(curl -s -w "\n%{http_code}" -H "Authorization: Bearer $GH_TOKEN" "https://api.github.com/repos/$GITHUB_USER/$FUSION_REPO_NAME/actions/secrets/public-key")
+KEY_STATUS=$(echo "$PUBLIC_KEY_RESPONSE" | tail -n1)
+if [ "$KEY_STATUS" -ne 200 ]; then
+    echo "❌ Fehler beim Abrufen des Public Keys für Secrets (HTTP-Status: $KEY_STATUS)."
+    exit 1
+fi
+PUBLIC_KEY=$(echo "$PUBLIC_KEY_RESPONSE" | head -n -1 | jq -r .key)
+KEY_ID=$(echo "$PUBLIC_KEY_RESPONSE" | head -n -1 | jq -r .key_id)
+
+# 2. Encrypt the secret using the public key
+ENCRYPTED_SECRET=$(echo -n "$GH_TOKEN" | gh secret encode --key "$PUBLIC_KEY")
+
+# 3. Upload the encrypted secret
+SECRET_PAYLOAD=$(jq -n --arg key_id "$KEY_ID" --arg secret "$ENCRYPTED_SECRET" '{key_id: $key_id, encrypted_value: $secret}')
+SECRET_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+     -X PUT \
+     -H "Authorization: Bearer $GH_TOKEN" \
+     -H "Accept: application/vnd.github.v3+json" \
+     "https://api.github.com/repos/$GITHUB_USER/$FUSION_REPO_NAME/actions/secrets/ACCESS_TOKEN" \
+     -d "$SECRET_PAYLOAD")
+
+if [ "$SECRET_STATUS" -ne 201 ] && [ "$SECRET_STATUS" -ne 204 ]; then
+    echo "❌ Fehler beim Setzen des Secrets (HTTP-Status: $SECRET_STATUS)."
+    exit 1
+fi
 echo "✔ Secret erfolgreich im Repository '$FUSION_REPO_NAME' gespeichert."
 
 WORKFLOW_NAME="Fusion-Repo Erstellen & Aktualisieren"
