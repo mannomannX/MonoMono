@@ -183,6 +183,12 @@ gh repo create "$GITHUB_USER/$FUSION_REPO_NAME" "$VISIBILITY_FLAG" --description
 echo -n "$PAT" | gh secret set ACCESS_TOKEN --repo "$GITHUB_USER/$FUSION_REPO_NAME" || { echo "❌ Fehler beim Setzen des Secrets."; exit 1; }
 echo "✔ Secret erfolgreich im Repository gespeichert."
 
+WORKFLOW_NAME="Fusion-Repo Erstellen & Aktualisieren"
+ON_TRIGGERS="on:\n  workflow_dispatch:"
+if [ -n "$CRON_SCHEDULE" ]; then
+    ON_TRIGGERS+="\n$CRON_SCHEDULE"
+fi
+
 read -r -d '' WORKFLOW_CONTENT << EOM
 name: 'Fusion-Repo Erstellen & Aktualisieren'
 on:
