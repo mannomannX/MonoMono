@@ -297,9 +297,11 @@ cd "$TEMP_DIR" && git add . && git commit -m "CI: Add sync workflow" && git push
 cd - >/dev/null && rm -rf "$TEMP_DIR"
 echo "✔ Haupt-Workflow erfolgreich im Fusions-Repo platziert."
 
-# 7. ECHTZEIT-SYNC EINRICHTEN (TRIGGER-WORKFLOWS)
+# 7. ECHTZEIT-SYNC EINRICHTEN (ROBUSTE METHODE)
 if [[ "$SETUP_WEBHOOKS" = true ]]; then
-    echo "-> Richte Echtzeit-Synchronisierung ein..."
+    echo "-> Richte Echtzeit-Synchronisierung mit sicherem App-Token ein..."
+
+    # Vorlage für den Trigger-Workflow. Nutzt jetzt den App-Token.
     read -r -d '' TRIGGER_WORKFLOW_CONTENT << EOM
 name: MonoMono Sync Trigger
 on:
@@ -312,18 +314,44 @@ jobs:
       - name: Send dispatch to fusion repo
         env:
           FUSION_REPO: \${{ secrets.MONOMONO_FUSION_REPO }}
-          GH_TOKEN: \${{ secrets.MONOMONO_PAT }}
+          # WICHTIG: Wir nutzen jetzt den sicheren App-Token
+          GH_TOKEN: \${{ secrets.MONOMONO_APP_TOKEN }}
         run: |
           if [ -z "\$FUSION_REPO" ] || [ -z "\$GH_TOKEN" ]; then echo "Fehler: Secrets nicht gesetzt."; exit 1; fi
           gh api --method POST "repos/\$FUSION_REPO/dispatches" -f "event_type=monomono-sync-event"
 EOM
+
     for repo in $(echo $SUB_REPOS | sed "s/,/ /g"); do
         echo "   - Konfiguriere Sub-Repo: $repo"
+        
+        # Setze die nötigen Secrets im Sub-Repo
+        # Secret 1: Der Name des Fusions-Repos
         gh secret set MONOMONO_FUSION_REPO --repo "$repo" --body "$GITHUB_USER/$FUSION_REPO_NAME"
-        gh secret set MONOMONO_PAT --repo "$repo" --body "$PAT"
-        gh workflow create "$TRIGGER_WORKFLOW_CONTENT" --repo "$repo" --title "MonoMono Sync Trigger" --description "Triggers the fusion repo sync on push." --allow-existing >/dev/null
+        
+        # Secret 2: Der sichere, kurzlebige App-Token (GH_TOKEN wurde von get_installation_token exportiert)
+        gh secret set MONOMONO_APP_TOKEN --repo "$repo" --body "$GH_TOKEN"
+
+        # Installiere den Trigger-Workflow
+        # Wir nutzen hier den PAT, da nur der User das Recht hat, Workflows zu erstellen
+        TEMP_SUB_DIR=$(mktemp -d)
+        git clone "https://x-access-token:$PAT@github.com/$repo.git" "$TEMP_SUB_DIR" >/dev/null 2>&1
+        
+        mkdir -p "$TEMP_SUB_DIR/.github/workflows"
+        echo -e "$TRIGGER_WORKFLOW_CONTENT" > "$TEMP_SUB_DIR/.github/workflows/monomono-trigger.yml"
+        
+        cd "$TEMP_SUB_DIR" || exit
+        git config user.name "MonoMono Script"
+        git add .github/workflows/monomono-trigger.yml
+        if ! git diff-index --quiet HEAD; then
+            git commit -m "feat: Add MonoMono sync trigger"
+            git push
+        else
+            echo "   - Trigger-Workflow ist bereits aktuell."
+        fi
+        cd - >/dev/null
+        rm -rf "$TEMP_SUB_DIR"
     done
-    echo "✔ Trigger-Workflows in Sub-Repos eingerichtet."
+    echo "✔ Trigger-Workflows und sichere App-Tokens in Sub-Repos eingerichtet."
 fi
 
 # 8. WORKFLOW STARTEN
