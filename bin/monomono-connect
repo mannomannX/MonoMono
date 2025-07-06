@@ -186,6 +186,14 @@ get_installation_token() {
     echo "✔ Erfolgreich als MonoMono-App authentifiziert."
 }
 
+echo "   - Generiere sicheren App-Token..."
+APP_TOKEN=$(get_installation_token) # 1. Rufe die Funktion auf und speichere das Ergebnis
+
+echo "   - Setze Secrets..."
+# 2. Setze die Secrets mit dem neuen Token
+GH_TOKEN=$PAT gh secret set MONOMONO_FUSION_REPO --repo "$NEW_SUB_REPO" --body "$FUSION_REPO"
+GH_TOKEN=$PAT gh secret set MONOMONO_APP_TOKEN --repo "$NEW_SUB_REPO" --body "$APP_TOKEN"
+
 # Trigger-Workflow installieren
 echo "   - Installiere Trigger-Workflow..."
 gh api --method PUT "repos/$NEW_SUB_REPO/contents/.github/workflows/monomono-trigger.yml" \
