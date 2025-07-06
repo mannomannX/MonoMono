@@ -126,29 +126,46 @@ if [ ! -f "$CONFIG_FILE" ]; then
     exit 1
 fi
 
-# Holt einen kurzlebigen Installation-Token für die App
+# Holt einen kurzlebigen Installation-Token für die App (Funktion direkt hier definiert)
 get_installation_token() {
-    # --- (Diese Funktion ist perfekt so, wie du sie eingefügt hast) ---
     APP_ID=$(jq -r '.app_id' "$CONFIG_FILE")
     PRIVATE_KEY_PATH=$(jq -r '.private_key_path' "$CONFIG_FILE")
     APP_NAME=$(jq -r '.app_name' "$CONFIG_FILE")
-    GITHUB_USER=$(jq -r '.github_user' "$CONFIG_FILE")
-    # ... Rest der Funktion ...
+    # Wir holen den User aus der Config, falls vorhanden, sonst fragen wir
+    if jq -e '.github_user' "$CONFIG_FILE" >/dev/null; then
+        GITHUB_USER=$(jq -r '.github_user' "$CONFIG_FILE")
+    else
+        read -p "? Bitte gib deinen GitHub-Benutzernamen ein: " GITHUB_USER
+        TMP_JSON=$(jq --arg user "$GITHUB_USER" '. + {github_user: $user}' "$CONFIG_FILE")
+        echo "$TMP_JSON" > "$CONFIG_FILE"
+    fi
+
+    if [ ! -f "$PRIVATE_KEY_PATH" ]; then echo "❌ Fehler: Die .pem-Datei wurde unter '$PRIVATE_KEY_PATH' nicht gefunden."; exit 1; fi
+
+    NOW=$(date +%s); IAT=$(($NOW - 60)); EXP=$(($NOW + 600))
+    HEADER_B64=$(echo -n '{"alg":"RS256","typ":"JWT"}' | base64 | tr -d '\n' | tr -d '=' | tr '/+' '_-')
+    PAYLOAD_B64=$(echo -n "{\"iat\":$IAT,\"exp\":$EXP,\"iss\":\"$APP_ID\"}" | base64 | tr -d '\n' | tr -d '=' | tr '/+' '_-')
+    SIGNATURE_B64=$(openssl dgst -sha256 -sign "$PRIVATE_KEY_PATH" <(echo -n "$HEADER_B64.$PAYLOAD_B64") | base64 | tr -d '\n' | tr -d '=' | tr '/+' '_-')
+    JWT="$HEADER_B64.$PAYLOAD_B64.$SIGNATURE_B64"
+
+    INSTALLATION_ID=$(curl -s -H "Authorization: Bearer $JWT" -H "Accept: application/vnd.github.v3+json" https://api.github.com/app/installations | jq ".[] | select(.account.login==\"$GITHUB_USER\") | .id")
+    if [ -z "$INSTALLATION_ID" ]; then echo "❌ Fehler: Die App ist für den Benutzer '$GITHUB_USER' nicht installiert."; exit 1; fi
+    
     INSTALLATION_TOKEN=$(curl -s -X POST -H "Authorization: Bearer $JWT" -H "Accept: application/vnd.github.v3+json" "https://api.github.com/app/installations/$INSTALLATION_ID/access_tokens" | jq -r '.token')
     if [ -z "$INSTALLATION_TOKEN" ] || [ "$INSTALLATION_TOKEN" == "null" ]; then echo "❌ Fehler beim Erstellen des Installation-Tokens."; exit 1; fi
-    # KORREKTUR: Exportiere den Token und leite die Erfolgsmeldung auf den Fehlerkanal um,
-    # damit sie nicht versehentlich aufgefangen wird.
-    export GH_TOKEN=$INSTALLATION_TOKEN
+    
+    export GENERATED_APP_TOKEN=$INSTALLATION_TOKEN
     echo "✔ Erfolgreich als MonoMono-App authentifiziert." >&2
 }
 
 echo "   - Generiere sicheren App-Token..."
-get_installation_token # 1. Rufe die Funktion ganz normal auf. Sie exportiert $GH_TOKEN.
+get_installation_token # Ruft die Funktion auf, sie exportiert $GENERATED_APP_TOKEN
 
 echo "   - Setze Secrets..."
-# 2. Verwende die exportierte Variable $GH_TOKEN direkt.
+# Wir verwenden den PAT, um die `gh`-Befehle auszuführen,
+# aber der Inhalt des Secrets ist der neu generierte, sichere App-Token.
 GH_TOKEN=$PAT gh secret set MONOMONO_FUSION_REPO --repo "$NEW_SUB_REPO" --body "$FUSION_REPO"
-GH_TOKEN=$PAT gh secret set MONOMONO_APP_TOKEN --repo "$NEW_SUB_REPO" --body "$GH_TOKEN" # <-- HIER IST DIE KORREKTUR
+GH_TOKEN=$PAT gh secret set MONOMONO_APP_TOKEN --repo "$NEW_SUB_REPO" --body "$GENERATED_APP_TOKEN"
 
 # Vorlage für den Trigger-Workflow (bleibt gleich)
 read -r -d '' TRIGGER_WORKFLOW_TEMPLATE << EOM
@@ -171,6 +188,7 @@ EOM
 
 # Trigger-Workflow installieren (bleibt gleich)
 echo "   - Installiere Trigger-Workflow..."
+# Wir verwenden den PAT, da nur ein User das Recht hat, einen Workflow zu erstellen/ändern.
 GH_TOKEN=$PAT gh api --method PUT "repos/$NEW_SUB_REPO/contents/.github/workflows/monomono-trigger.yml" \
    -f message="feat: Add monomono trigger workflow" \
    -f content="$(echo -n "$TRIGGER_WORKFLOW_TEMPLATE" | base64)" >/dev/null || { echo "❌ Fehler beim Installieren des Trigger-Workflows."; exit 1; }
