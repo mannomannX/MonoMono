@@ -1,8 +1,9 @@
 #!/bin/bash
 # ==============================================================================
-# MONOMONO-DISCONNECT v1.5 (Final & Edge-Case-Resistant)
+# MONOMONO-DISCONNECT v1.7 (Final & Complete)
 # ==============================================================================
-# Trennt ausgewählte Sub-Repos, auch wenn das Setup bereits beschädigt ist.
+# Trennt ausgewählte Sub-Repos, aktualisiert den Haupt-Workflow UND
+# stößt einen finalen Sync-Lauf zum Aufräumen an.
 # ==============================================================================
 
 auth_check() {
@@ -32,48 +33,43 @@ while [ -z "$PAT" ]; do
     read -s -p "👉 Bitte füge den kopierten Token hier ein: " PAT; echo
 done
 
-# 3. Bestehende Konfiguration auslesen (mit neuem Fehler-Handling)
+# 3. Bestehende Konfiguration auslesen
 echo "-> Versuche, die Konfiguration aus '$FUSION_REPO' zu lesen..."
 WORKFLOW_RESPONSE=$(GH_TOKEN=$PAT gh api "repos/$FUSION_REPO/contents/.github/workflows/sync.yml" 2>/dev/null)
 SUB_REPOS_OLD=""
 
 if echo "$WORKFLOW_RESPONSE" | jq -e '.sha' > /dev/null; then
-    # FALL 1: sync.yml existiert, wir können die Repos automatisch extrahieren.
     echo "✔ Konfiguration gefunden. Extrahiere verbundene Repos..."
     WORKFLOW_CONTENT=$(echo "$WORKFLOW_RESPONSE" | jq -r .content | base64 --decode)
     WORKFLOW_SHA=$(echo "$WORKFLOW_RESPONSE" | jq -r .sha)
     SUB_REPOS_OLD=$(echo "$WORKFLOW_CONTENT" | grep -oP "REPOS_TO_SYNC='([^']*)'" | sed -E "s/REPOS_TO_SYNC='([^']*)'/\1/")
 else
-    # FALL 2: sync.yml existiert NICHT. Wir warnen den Benutzer und gehen in den manuellen Modus.
-    echo "⚠️  Warnung: Konnte 'sync.yml' im Repo '$FUSION_REPO' nicht finden."
-    echo "   Das Setup scheint bereits teilweise getrennt zu sein. Wechsle in den manuellen Modus."
+    echo "⚠️  Warnung: Konnte 'sync.yml' nicht finden. Wechsle in den manuellen Modus."
 fi
 
 # 4. Auswahl der zu trennenden Repos
 if [ -n "$SUB_REPOS_OLD" ]; then
-    # Interaktive Auswahl, wenn die Liste automatisch gefunden wurde
     echo "-> Wähle die zu trennenden Sub-Repos:"
     REPOS_TO_DISCONNECT=$(echo "$SUB_REPOS_OLD" | tr ',' '\n' | fzf --multi --prompt="Trennen> ")
 else
-    # Manuelle Eingabe, wenn die Liste nicht gefunden wurde
     read -p "? Bitte gib die zu trennenden Sub-Repos manuell ein (user/repo1,user/repo2,...): " REPOS_TO_DISCONNECT
 fi
 
 if [ -z "$REPOS_TO_DISCONNECT" ]; then echo "❌ Abbruch: Keine Repos ausgewählt oder eingegeben."; exit 1; fi
 
-# 5. Trennungslogik (bleibt gleich robust)
+# 5. Trennungslogik
 for repo in $(echo "$REPOS_TO_DISCONNECT" | tr ',' ' '); do
     echo "-> Trenne $repo..."
-    GH_TOKEN=$PAT gh secret delete MONOMONO_FUSION_REPO --repo "$repo" 2>/dev/null || true
-    GH_TOKEN=$PAT gh secret delete MONOMONO_APP_TOKEN --repo "$repo" 2>/dev/null || true
-
-    SHA_TRIGGER=$(GH_TOKEN=$PAT gh api "repos/$repo/contents/.github/workflows/monomono-trigger.yml" --jq .sha 2>/dev/null)
+    GH_TOKEN=$PAT gh secret delete MONOMONO_FUSION_REPO --repo "$repo" &>/dev/null
+    GH_TOKEN=$PAT gh secret delete MONOMONO_APP_TOKEN --repo "$repo" &>/dev/null
+    SHA_TRIGGER=$(GH_TOKEN=$PAT gh api "repos/$repo/contents/.github/workflows/monomono-trigger.yml" --jq .sha &>/dev/null)
     if [ -n "$SHA_TRIGGER" ]; then
-        GH_TOKEN=$PAT gh api --method DELETE "repos/$repo/contents/.github/workflows/monomono-trigger.yml" -f message="build: Remove monomono trigger" -f sha="$SHA_TRIGGER" >/dev/null || true
+        GH_TOKEN=$PAT gh api --method DELETE "repos/$repo/contents/.github/workflows/monomono-trigger.yml" -f message="build: Remove monomono trigger" -f sha="$SHA_TRIGGER" &>/dev/null
     fi
 done
 
-# 6. Haupt-Workflow aktualisieren (nur wenn er existiert)
+# 6. Haupt-Workflow aktualisieren
+RUN_FINAL_SYNC=false
 if [ -n "$WORKFLOW_SHA" ]; then
     echo "-> Aktualisiere Haupt-Workflow in '$FUSION_REPO'..."
     SUB_REPOS_NEW=$SUB_REPOS_OLD
@@ -88,11 +84,18 @@ if [ -n "$WORKFLOW_SHA" ]; then
            -f content="$(echo -n "$NEW_WORKFLOW_CONTENT" | base64)" \
            -f sha="$WORKFLOW_SHA" >/dev/null
         echo "✔ Haupt-Workflow wurde aktualisiert."
+        RUN_FINAL_SYNC=true
     else
         GH_TOKEN=$PAT gh api --method DELETE "repos/$FUSION_REPO/contents/.github/workflows/sync.yml" \
            -f message="build: Remove final monomono workflow" -f sha="$WORKFLOW_SHA" > /dev/null
         echo "✔ Alle Repos getrennt. Haupt-Workflow wurde entfernt."
     fi
+fi
+
+# 7. Finalen Sync-Lauf zum Aufräumen anstoßen
+if [ "$RUN_FINAL_SYNC" = true ]; then
+    echo "-> Stoße finalen Sync-Lauf zum Aufräumen an..."
+    gh workflow run sync.yml --repo "$FUSION_REPO"
 fi
 
 echo "✅ Prozess abgeschlossen."

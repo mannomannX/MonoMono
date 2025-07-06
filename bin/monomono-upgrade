@@ -66,7 +66,7 @@ if [[ ! "$choice" =~ ^[YyJj]$ ]]; then echo "❌ Abbruch durch Benutzer."; exit 
 
 # 5. Neueste Workflow-Vorlagen definieren
 # (Hier die Heredocs für SYNC_WORKFLOW_TEMPLATE und TRIGGER_WORKFLOW_TEMPLATE einfügen, genau wie in der letzten Version)
-# Vorlage für den Haupt-Workflow (Version 2.0 - Self-Contained)
+# Vorlage für den Haupt-Workflow (Version 3.0 - mit Aufräum-Logik)
 read -r -d '' SYNC_WORKFLOW_TEMPLATE << EOM
 name: 'Fusion-Repo Sync'
 on:
@@ -87,19 +87,30 @@ jobs:
       - name: Sync and Rebuild
         run: |
           # == CONFIGURATION ==
-          # Die Liste der Repos steht jetzt nur noch hier an einer Stelle.
           REPOS_TO_SYNC='${SUB_REPOS_NEW}' # Platzhalter wird vom Skript ersetzt
 
-          # == STEP 1: CLONE SUB-REPOS ==
+          # == STEP 1: CLEANUP GHOST DIRECTORIES (DER NEUE, ENTSCHEIDENDE SCHRITT) ==
+          echo "-> Searching for obsolete directories to remove..."
+          ALL_DIRS=\$(find . -maxdepth 1 -mindepth 1 -type d ! -name '.git' -exec basename {} \;)
+          for dir in \$ALL_DIRS; do
+              # Prüfe, ob das Verzeichnis in der aktuellen Sync-Liste ist
+              if ! echo "\$REPOS_TO_SYNC" | grep -q "\$dir"; then
+                  echo "   - Deleting obsolete directory: \$dir"
+                  rm -rf "\$dir"
+              fi
+          done
+
+          # == STEP 2: CLONE SUB-REPOS ==
           git config --global url."https://x-access-token:\${{ secrets.ACCESS_TOKEN }}@github.com/".insteadOf "https://github.com/"
           for repo in \$(echo "\$REPOS_TO_SYNC" | sed 's/,/ /g'); do
             folder_name=\$(basename \$repo)
             echo "-> Cloning \$repo into \$folder_name..."
+            # Es ist sicherer, erst zu löschen, dann zu klonen, falls sich was geändert hat
             rm -rf "\$folder_name"
             git clone --depth 1 https://github.com/\$repo.git "\$folder_name" && rm -rf "\$folder_name/.git"
           done
 
-          # == STEP 2: CREATE INTELLIGENT README ==
+          # == STEP 3: CREATE INTELLIGENT README ==
           sudo apt-get update -qq && sudo apt-get install -y tree >/dev/null
           echo "# 🤖 MonoMono Fusions-Repo" > README.md
           echo "" >> README.md
@@ -116,7 +127,7 @@ jobs:
           echo "" >> README.md
           echo "> Letzte Aktualisierung: \$(date)" >> README.md
 
-          # == STEP 3: COMMIT AND PUSH ==
+          # == STEP 4: COMMIT AND PUSH ==
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
           git add .
