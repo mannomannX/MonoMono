@@ -133,17 +133,57 @@ ensure_app_configured() {
     
     read -p "? Drücke ENTER, nachdem du die App erstellt hast..."
     echo
-    echo "--- DATEN SAMMELN ---"
-    read -p "? Bitte gib deine 'App ID' ein: " NEW_APP_ID
-    read -p "? Bitte gib den Namen deiner App ein (exakte Schreibweise): " NEW_APP_NAME
-    echo "Jetzt generiere einen 'Private Key' und lade ihn herunter."
-    read -p "? Bitte gib den vollständigen Pfad zur .pem-Datei ein: " NEW_PRIVATE_KEY_PATH
+# ==============================================================================
+# DATEN SAMMELN - Visuell vereinheitlicht
+# ==============================================================================
 
-    mkdir -p "$CONFIG_DIR"
-    echo "{\"app_id\":\"$NEW_APP_ID\",\"private_key_path\":\"$NEW_PRIVATE_KEY_PATH\",\"app_name\":\"$NEW_APP_NAME\"}" > "$CONFIG_FILE"
-    echo
-    echo "✅ App-Konfiguration erfolgreich gespeichert!"
-    echo "--------------------------------------------------------------------"
+echo ""
+echo "⚙️  DATEN SAMMELN"
+echo "=============================================================================="
+echo "Wir konfigurieren jetzt deine MonoMono-GitHub-App."
+echo "Halte bitte deinen Benutzernamen, die App-ID und den Private Key bereit."
+echo "=============================================================================="
+echo ""
+
+# --- Schritt 1: GitHub-Benutzername ---
+echo "➡️  Schritt 1: GitHub-Benutzername"
+echo "---------------------------------------------------"
+read -p "? Bitte gib deinen GitHub-Benutzernamen ein: " NEW_USERNAME
+update_config "github_user" "$NEW_USERNAME"
+echo "✅ Benutzername in der Konfiguration gespeichert."
+echo ""
+
+# --- Schritt 2: GitHub App ID ---
+echo "➡️  Schritt 2: GitHub App ID"
+echo "---------------------------------------------------"
+read -p "? Bitte gib die numerische ID deiner GitHub App ein: " NEW_APP_ID
+update_config "app_id" "$NEW_APP_ID"
+echo "✅ App-ID in der Konfiguration gespeichert."
+echo ""
+
+# --- Schritt 3: GitHub App Private Key ---
+echo "➡️  Schritt 3: GitHub App Private Key"
+echo "---------------------------------------------------"
+echo "1. Öffne die heruntergeladene .pem-Datei in einem Texteditor."
+echo "2. Kopiere den GESAMTEN Inhalt (inkl. -----BEGIN... und -----END...)."
+echo "3. Füge den Inhalt hier ein und drücke dann Strg+D (auf einer neuen Zeile)."
+echo ""
+echo "? Bitte füge jetzt den Inhalt des Private Keys ein:"
+
+PEM_CONTENT=$(cat)
+
+if [ -z "$PEM_CONTENT" ]; then
+  echo "❌ Fehler: Es wurde kein Inhalt eingefügt. Abbruch." >&2
+  exit 1
+fi
+
+TEMP_PEM_PATH="$HOME/.monomono/temp_private_key.pem"
+echo "$PEM_CONTENT" > "$TEMP_PEM_PATH"
+chmod 600 "$TEMP_PEM_PATH"
+
+update_config "private_key_path" "$TEMP_PEM_PATH"
+echo "✅ Private Key sicher gespeichert und Pfad in der Konfiguration hinterlegt."
+echo ""
 }
 
 get_installation_token() {
