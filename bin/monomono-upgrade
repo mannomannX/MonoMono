@@ -1,22 +1,16 @@
 #!/bin/bash
 # ==============================================================================
-# MONOMONO-UPGRADE v1.2 (Final & Cleaned)
+# MONOMONO-UPGRADE v1.3 (Final & Consistent Auth)
 # ==============================================================================
 # Aktualisiert ein bestehendes Fusions-Repo und alle verbundenen Sub-Repos
-# auf die neuesten Workflow-Versionen. Funktioniert eigenständig.
+# auf die neuesten Workflow-Versionen. Nutzt expliziten PAT für alle API-Ops.
 # ==============================================================================
 
 auth_check() {
-    # Prüft, ob der Benutzer bereits bei der GitHub CLI angemeldet ist.
     if ! gh auth status >/dev/null 2>&1; then
         echo "⚠️  Du scheinst nicht bei der GitHub CLI angemeldet zu sein."
         read -p "? Soll 'gh auth login' jetzt ausgeführt werden? (j/n) " choice
-        if [[ "$choice" =~ ^[YyJj]$ ]]; then
-            gh auth login
-        else
-            echo "❌ Abbruch: Authentifizierung ist erforderlich." >&2
-            exit 1
-        fi
+        if [[ "$choice" =~ ^[YyJj]$ ]]; then gh auth login; else echo "❌ Abbruch."; exit 1; fi
     fi
     GITHUB_USER=$(gh api user --jq .login)
     echo "✔ Authentifiziert als '$GITHUB_USER'."
@@ -29,18 +23,35 @@ auth_check
 read -p "? Welches Fusions-Repo soll aktualisiert werden? (Format: user/repo): " FUSION_REPO
 if [ -z "$FUSION_REPO" ]; then echo "❌ Abbruch: Kein Repo angegeben."; exit 1; fi
 
-# 2. Workflow auslesen und Sub-Repos extrahieren (ROBUSTE METHODE)
+# 2. PAT für alle API-Operationen abfragen (wie im connect-Skript)
+echo "--------------------------------------------------------------------"
+echo "🔑 INFO: Ein persönlicher Zugriffstoken (PAT) wird benötigt."
+echo "‼️  WICHTIG: Der Token braucht die Scopes 'repo' UND 'workflow'."
+echo "   URL: https://github.com/settings/tokens/new"
+echo "--------------------------------------------------------------------"
+PAT=""
+while [ -z "$PAT" ]; do
+    read -s -p "👉 Bitte füge den kopierten Token hier ein und drücke ENTER: " PAT; echo
+done
+SCOPES=$(curl -s -H "Authorization: token $PAT" https://api.github.com/ -I | grep -i x-oauth-scopes | sed 's/x-oauth-scopes: //g' | tr -d '\r')
+if ! [[ "$SCOPES" == *"repo"* && "$SCOPES" == *"workflow"* ]]; then
+    echo "❌ FEHLER: Der Token hat nicht die erforderlichen Scopes 'repo' und 'workflow'." >&2
+    exit 1
+fi
+echo "✔ Access Token ist gültig und hat die korrekten Berechtigungen."
+
+# 3. Workflow auslesen (mit explizitem PAT)
 echo "-> Lese die aktuelle Konfiguration aus '$FUSION_REPO'..."
-WORKFLOW_RESPONSE=$(gh api "repos/$FUSION_REPO/contents/.github/workflows/sync.yml" 2>/dev/null)
+WORKFLOW_RESPONSE=$(GH_TOKEN=$PAT gh api "repos/$FUSION_REPO/contents/.github/workflows/sync.yml" 2>/dev/null)
 
 if ! echo "$WORKFLOW_RESPONSE" | jq -e '.sha' > /dev/null; then
-    echo "❌ Fehler: Konnte 'sync.yml' im Repo '$FUSION_REPO' nicht lesen oder sie ist fehlerhaft." >&2
-    echo "   Stelle sicher, dass der Repo-Name korrekt ist und du bei 'gh' angemeldet bist." >&2
+    echo "❌ Fehler: Konnte 'sync.yml' im Repo '$FUSION_REPO' nicht lesen." >&2
+    echo "   Stelle sicher, dass der Repo-Name korrekt ist und dein PAT die 'repo'-Rechte hat." >&2
     exit 1
 fi
 
 WORKFLOW_CONTENT=$(echo "$WORKFLOW_RESPONSE" | jq -r .content | base64 --decode)
-WORKFLOW_SHA=$(echo "$WORKFLOW_RESPONSE" | jq -r .sha) # KORREKTUR: Wir verwenden diese Variable
+WORKFLOW_SHA=$(echo "$WORKFLOW_RESPONSE" | jq -r .sha)
 
 SUB_REPOS=$(echo "$WORKFLOW_CONTENT" | grep -oP "for repo in \\\$\(echo '([^']*)'" | head -n1 | sed -E "s/for repo in \\\$\(echo '([^']*)'/\1/")
 if [ -z "$SUB_REPOS" ]; then
@@ -49,11 +60,12 @@ if [ -z "$SUB_REPOS" ]; then
 fi
 echo "✔ Folgende Sub-Repos gefunden: $SUB_REPOS"
 
-# 3. Bestätigung des Benutzers
+# 4. Bestätigung des Benutzers
 read -p "? Fortfahren und die Workflows aktualisieren? (j/n) " choice
 if [[ ! "$choice" =~ ^[YyJj]$ ]]; then echo "❌ Abbruch durch Benutzer."; exit 1; fi
 
-# 4. Neueste Workflow-Versionen direkt hier definieren
+# 5. Neueste Workflow-Vorlagen definieren
+# (Hier die Heredocs für SYNC_WORKFLOW_TEMPLATE und TRIGGER_WORKFLOW_TEMPLATE einfügen, genau wie in der letzten Version)
 read -r -d '' SYNC_WORKFLOW_TEMPLATE << EOM
 name: 'Fusion-Repo Sync'
 on:
@@ -110,24 +122,24 @@ jobs:
           gh api --method POST "repos/\$FUSION_REPO/dispatches" -f "event_type=monomono-sync-event"
 EOM
 
-# 5. Workflows aktualisieren
+
+# 6. Workflows aktualisieren (mit explizitem PAT)
 echo "-> Aktualisiere Haupt-Workflow in '$FUSION_REPO'..."
-# KORREKTUR: Keine Duplikate und wir verwenden WORKFLOW_SHA
-gh api --method PUT "repos/$FUSION_REPO/contents/.github/workflows/sync.yml" \
+GH_TOKEN=$PAT gh api --method PUT "repos/$FUSION_REPO/contents/.github/workflows/sync.yml" \
    -f message="build: Upgrade monomono sync workflow" \
    -f content="$(echo -n "$SYNC_WORKFLOW_TEMPLATE" | base64)" \
    -f sha="$WORKFLOW_SHA" >/dev/null
 
 for repo in $(echo "$SUB_REPOS" | sed "s/,/ /g"); do
     echo "   - Verarbeite $repo..."
-    SHA_TRIGGER=$(gh api "repos/$repo/contents/.github/workflows/monomono-trigger.yml" --jq .sha 2>/dev/null)
+    SHA_TRIGGER=$(GH_TOKEN=$PAT gh api "repos/$repo/contents/.github/workflows/monomono-trigger.yml" --jq .sha 2>/dev/null)
     if [ -n "$SHA_TRIGGER" ]; then
-        gh api --method PUT "repos/$repo/contents/.github/workflows/monomono-trigger.yml" \
+        GH_TOKEN=$PAT gh api --method PUT "repos/$repo/contents/.github/workflows/monomono-trigger.yml" \
            -f message="build: Upgrade monomono trigger workflow" \
            -f content="$(echo -n "$TRIGGER_WORKFLOW_TEMPLATE" | base64)" \
            -f sha="$SHA_TRIGGER" >/dev/null
     else
-        gh api --method PUT "repos/$repo/contents/.github/workflows/monomono-trigger.yml" \
+        GH_TOKEN=$PAT gh api --method PUT "repos/$repo/contents/.github/workflows/monomono-trigger.yml" \
            -f message="feat: Add monomono trigger workflow" \
            -f content="$(echo -n "$TRIGGER_WORKFLOW_TEMPLATE" | base64)" >/dev/null
     fi
