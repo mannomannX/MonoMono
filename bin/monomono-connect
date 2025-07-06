@@ -117,7 +117,8 @@ EOM
 
 # 6. Haupt-Workflow im Fusions-Repo aktualisieren
 echo "-> Aktualisiere Haupt-Workflow in '$FUSION_REPO'..."
-gh api --method PUT "repos/$FUSION_REPO/contents/.github/workflows/sync.yml" \
+# FEHLER-FIX: Explizit den PAT für diesen API-Aufruf verwenden
+GH_TOKEN=$PAT gh api --method PUT "repos/$FUSION_REPO/contents/.github/workflows/sync.yml" \
    -f message="build: Connect new sub-repo ($NEW_SUB_REPO)" \
    -f content="$(echo -n "$SYNC_WORKFLOW_TEMPLATE" | base64)" \
    -f sha="$WORKFLOW_SHA" >/dev/null || { echo "❌ Fehler beim Aktualisieren des Haupt-Workflows."; exit 1; }
