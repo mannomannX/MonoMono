@@ -1,9 +1,8 @@
 #!/bin/bash
 # ==============================================================================
-# MONOMONO-DISCONNECT v1.2 (Flexibel & Robust)
+# MONOMONO-DISCONNECT v1.3 (Final & Intelligent)
 # ==============================================================================
-# Trennt ausgewählte Sub-Repos von einem Fusions-Repo oder das gesamte Setup.
-# Nutzt eine interaktive Auswahl und konsistente Authentifizierung.
+# Trennt ausgewählte Sub-Repos UND aktualisiert den Haupt-Workflow.
 # ==============================================================================
 
 auth_check() {
@@ -40,7 +39,7 @@ if ! [[ "$SCOPES" == *"repo"* && "$SCOPES" == *"workflow"* ]]; then
 fi
 echo "✔ Access Token ist gültig."
 
-# 3. Bestehende Konfiguration auslesen (mit explizitem PAT)
+# 3. Bestehende Konfiguration auslesen
 echo "-> Lese die aktuelle Konfiguration aus '$FUSION_REPO'..."
 WORKFLOW_RESPONSE=$(GH_TOKEN=$PAT gh api "repos/$FUSION_REPO/contents/.github/workflows/sync.yml" 2>/dev/null)
 if ! echo "$WORKFLOW_RESPONSE" | jq -e '.sha' > /dev/null; then
@@ -58,54 +57,38 @@ fi
 
 # 4. Interaktive Auswahl der zu trennenden Repos
 echo "-> Wähle die zu trennenden Sub-Repos:"
-echo "   (Navigation: Pfeiltasten, Auswahl: TAB, Bestätigen: ENTER)"
 REPOS_TO_DISCONNECT=$(echo "$SUB_REPOS_OLD" | tr ',' '\n' | fzf --multi --prompt="Trennen> ")
 if [ -z "$REPOS_TO_DISCONNECT" ]; then echo "❌ Abbruch: Keine Repos ausgewählt."; exit 1; fi
-
-echo "Folgende Repos werden getrennt:"
-echo "$REPOS_TO_DISCONNECT"
-read -p "? Fortfahren? (j/n) " choice
-if [[ ! "$choice" =~ ^[YyJj]$ ]]; then echo "❌ Abbruch."; exit 1; fi
 
 # 5. Trennungslogik
 for repo in $REPOS_TO_DISCONNECT; do
     echo "-> Trenne $repo..."
-    # Lösche Secrets (mit explizitem PAT)
     GH_TOKEN=$PAT gh secret delete MONOMONO_FUSION_REPO --repo "$repo"
-    GH_TOKEN=$PAT gh secret delete MONOMONO_APP_TOKEN --repo "$repo" # KORREKTUR: Korrekten Secret-Namen verwenden
+    GH_TOKEN=$PAT gh secret delete MONOMONO_APP_TOKEN --repo "$repo"
 
-    # Lösche Workflow (mit explizitem PAT)
     SHA_TRIGGER=$(GH_TOKEN=$PAT gh api "repos/$repo/contents/.github/workflows/monomono-trigger.yml" --jq .sha 2>/dev/null)
     if [ -n "$SHA_TRIGGER" ]; then
         GH_TOKEN=$PAT gh api --method DELETE "repos/$repo/contents/.github/workflows/monomono-trigger.yml" -f message="build: Remove monomono trigger" -f sha="$SHA_TRIGGER" >/dev/null
     fi
 done
 
-# 6. Fusions-Repo-Workflow aktualisieren
+# 6. Haupt-Workflow aktualisieren
 echo "-> Aktualisiere Haupt-Workflow in '$FUSION_REPO'..."
-# Erstelle die neue, reduzierte Liste von Sub-Repos
 SUB_REPOS_NEW=$(echo ",$SUB_REPOS_OLD," | sed "s/,$(echo $REPOS_TO_DISCONNECT | sed 's/ /|/g'),/,/g" | sed 's/^,//;s/,$//')
 
-# Erstelle die neue Workflow-Datei (nur wenn noch Repos übrig sind)
 if [ -n "$SUB_REPOS_NEW" ]; then
-    # Ersetze die alte Liste durch die neue im Workflow-Template
     NEW_WORKFLOW_CONTENT=$(echo "$WORKFLOW_CONTENT" | sed "s/'$SUB_REPOS_OLD'/'$SUB_REPOS_NEW'/")
     GH_TOKEN=$PAT gh api --method PUT "repos/$FUSION_REPO/contents/.github/workflows/sync.yml" \
        -f message="build: Disconnect sub-repo(s)" \
        -f content="$(echo -n "$NEW_WORKFLOW_CONTENT" | base64)" \
        -f sha="$WORKFLOW_SHA" >/dev/null
-    echo "✔ Haupt-Workflow wurde aktualisiert."
+    echo "✔ Haupt-Workflow wurde aktualisiert, um entfernte Repos zu reflektieren."
 else
-    echo "ℹ️  Keine Sub-Repos mehr verbunden. Der Haupt-Workflow wird nicht aktualisiert."
+    # Alle Repos wurden getrennt, wir löschen den Workflow
+    GH_TOKEN=$PAT gh api --method DELETE "repos/$FUSION_REPO/contents/.github/workflows/sync.yml" \
+       -f message="build: Remove final monomono workflow" \
+       -f sha="$WORKFLOW_SHA" > /dev/null
+    echo "✔ Alle Repos getrennt. Haupt-Workflow wurde entfernt."
 fi
 
-echo "✔ Ausgewählte Sub-Repos erfolgreich getrennt."
-
-# 7. Optionales Löschen des Fusions-Repo
-read -p "? Soll auch das Fusions-Repo '$FUSION_REPO' selbst gelöscht werden? (j/n) " delete_choice
-if [[ "$delete_choice" =~ ^[YyJj]$ ]]; then
-    GH_TOKEN=$PAT gh repo delete "$FUSION_REPO" --yes
-    echo "✅ Fusions-Repo '$FUSION_REPO' wurde gelöscht."
-fi
-
-echo "✅ Prozess abgeschlossen."
+echo "✅ Ausgewählte Sub-Repos erfolgreich getrennt."
