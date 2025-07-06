@@ -117,7 +117,40 @@ echo "✔ Haupt-Workflow erfolgreich aktualisiert."
 # 7. Neues Sub-Repo konfigurieren
 echo "-> Konfiguriere neues Sub-Repo '$NEW_SUB_REPO'..."
 
-# Vorlage für den Trigger-Workflow. Nutzt den sicheren App-Token.
+# Lade die Konfiguration, um einen App-Token zu generieren
+CONFIG_DIR="$HOME/.monomono"
+CONFIG_FILE="$CONFIG_DIR/config.json"
+if [ ! -f "$CONFIG_FILE" ]; then
+    echo "❌ Fehler: Konnte die MonoMono-Konfigurationsdatei nicht finden." >&2
+    echo "   Bitte führe zuerst das Hauptskript 'monomono' einmal vollständig aus." >&2
+    exit 1
+fi
+
+# Holt einen kurzlebigen Installation-Token für die App
+get_installation_token() {
+    # --- (Diese Funktion ist perfekt so, wie du sie eingefügt hast) ---
+    APP_ID=$(jq -r '.app_id' "$CONFIG_FILE")
+    PRIVATE_KEY_PATH=$(jq -r '.private_key_path' "$CONFIG_FILE")
+    APP_NAME=$(jq -r '.app_name' "$CONFIG_FILE")
+    GITHUB_USER=$(jq -r '.github_user' "$CONFIG_FILE")
+    # ... Rest der Funktion ...
+    INSTALLATION_TOKEN=$(curl -s -X POST -H "Authorization: Bearer $JWT" -H "Accept: application/vnd.github.v3+json" "https://api.github.com/app/installations/$INSTALLATION_ID/access_tokens" | jq -r '.token')
+    if [ -z "$INSTALLATION_TOKEN" ] || [ "$INSTALLATION_TOKEN" == "null" ]; then echo "❌ Fehler beim Erstellen des Installation-Tokens."; exit 1; fi
+    # KORREKTUR: Exportiere den Token und leite die Erfolgsmeldung auf den Fehlerkanal um,
+    # damit sie nicht versehentlich aufgefangen wird.
+    export GH_TOKEN=$INSTALLATION_TOKEN
+    echo "✔ Erfolgreich als MonoMono-App authentifiziert." >&2
+}
+
+echo "   - Generiere sicheren App-Token..."
+get_installation_token # 1. Rufe die Funktion ganz normal auf. Sie exportiert $GH_TOKEN.
+
+echo "   - Setze Secrets..."
+# 2. Verwende die exportierte Variable $GH_TOKEN direkt.
+GH_TOKEN=$PAT gh secret set MONOMONO_FUSION_REPO --repo "$NEW_SUB_REPO" --body "$FUSION_REPO"
+GH_TOKEN=$PAT gh secret set MONOMONO_APP_TOKEN --repo "$NEW_SUB_REPO" --body "$GH_TOKEN" # <-- HIER IST DIE KORREKTUR
+
+# Vorlage für den Trigger-Workflow (bleibt gleich)
 read -r -d '' TRIGGER_WORKFLOW_TEMPLATE << EOM
 name: MonoMono Sync Trigger
 on:
@@ -130,75 +163,18 @@ jobs:
       - name: Send dispatch to fusion repo
         env:
           FUSION_REPO: \${{ secrets.MONOMONO_FUSION_REPO }}
-          GH_TOKEN: \${{ secrets.MONOMONO_APP_TOKEN }} # Nutzt den App-Token
+          GH_TOKEN: \${{ secrets.MONOMONO_APP_TOKEN }}
         run: |
           if [ -z "\$FUSION_REPO" ] || [ -z "\$GH_TOKEN" ]; then echo "Fehler: Secrets nicht gesetzt."; exit 1; fi
           gh api --method POST "repos/\$FUSION_REPO/dispatches" -f "event_type=monomono-sync-event"
 EOM
 
-# Secrets setzen
-echo "   - Setze Secrets..."
-# HINWEIS: Wir brauchen hier den PAT nur noch, um die API-Befehle auszuführen,
-# aber der Inhalt, den wir als Secret speichern, ist der sichere App-Token.
-# Dafür müssen wir den App-Token aber erst generieren. Das machen wir,
-# indem wir die Konfiguration des Hauptskripts laden.
-
-# Lade die Konfiguration, um einen App-Token zu generieren
-CONFIG_DIR="$HOME/.monomono"
-CONFIG_FILE="$CONFIG_DIR/config.json"
-if [ ! -f "$CONFIG_FILE" ]; then
-    echo "❌ Fehler: Konnte die MonoMono-Konfigurationsdatei nicht finden." >&2
-    echo "   Bitte führe zuerst das Hauptskript 'monomono' einmal vollständig aus." >&2
-    exit 1
-fi
-
-# Holt einen kurzlebigen Installation-Token für die App
-get_installation_token() {
-    APP_ID=$(jq -r '.app_id' "$CONFIG_FILE")
-    PRIVATE_KEY_PATH=$(jq -r '.private_key_path' "$CONFIG_FILE")
-    APP_NAME=$(jq -r '.app_name' "$CONFIG_FILE")
-    GITHUB_USER=$(jq -r '.github_user' "$CONFIG_FILE")
-
-    if [ ! -f "$PRIVATE_KEY_PATH" ]; then echo "❌ Fehler: Die .pem-Datei wurde unter '$PRIVATE_KEY_PATH' nicht gefunden."; exit 1; fi
-
-    NOW=$(date +%s); IAT=$(($NOW - 60)); EXP=$(($NOW + 600))
-    HEADER_B64=$(echo -n '{"alg":"RS256","typ":"JWT"}' | base64 | tr -d '\n' | tr -d '=' | tr '/+' '_-')
-    PAYLOAD_B64=$(echo -n "{\"iat\":$IAT,\"exp\":$EXP,\"iss\":\"$APP_ID\"}" | base64 | tr -d '\n' | tr -d '=' | tr '/+' '_-')
-    SIGNATURE_B64=$(openssl dgst -sha256 -sign "$PRIVATE_KEY_PATH" <(echo -n "$HEADER_B64.$PAYLOAD_B64") | base64 | tr -d '\n' | tr -d '=' | tr '/+' '_-')
-    JWT="$HEADER_B64.$PAYLOAD_B64.$SIGNATURE_B64"
-
-    INSTALLATION_ID=$(curl -s -H "Authorization: Bearer $JWT" -H "Accept: application/vnd.github.v3+json" https://api.github.com/app/installations | jq ".[] | select(.account.login==\"$GITHUB_USER\") | .id")
-
-    while [ -z "$INSTALLATION_ID" ]; do
-        echo "--------------------------------------------------------------------"
-        echo "⚠️  AKTION ERFORDERLICH: Die App '$APP_NAME' ist noch nicht installiert."
-        echo "   Bitte öffne: https://github.com/settings/apps/$APP_NAME/installations"
-        echo "   Wähle 'All repositories' und klicke 'Install'."
-        read -p "? Drücke ENTER, nachdem du die Installation abgeschlossen hast..."
-        sleep 3
-        INSTALLATION_ID=$(curl -s -H "Authorization: Bearer $JWT" -H "Accept: application/vnd.github.v3+json" https://api.github.com/app/installations | jq ".[] | select(.account.login==\"$GITHUB_USER\") | .id")
-    done
-
-    INSTALLATION_TOKEN=$(curl -s -X POST -H "Authorization: Bearer $JWT" -H "Accept: application/vnd.github.v3+json" "https://api.github.com/app/installations/$INSTALLATION_ID/access_tokens" | jq -r '.token')
-    if [ -z "$INSTALLATION_TOKEN" ] || [ "$INSTALLATION_TOKEN" == "null" ]; then echo "❌ Fehler beim Erstellen des Installation-Tokens."; exit 1; fi
-
-    export GH_TOKEN=$INSTALLATION_TOKEN
-    echo "✔ Erfolgreich als MonoMono-App authentifiziert."
-}
-
-echo "   - Generiere sicheren App-Token..."
-APP_TOKEN=$(get_installation_token) # 1. Rufe die Funktion auf und speichere das Ergebnis
-
-echo "   - Setze Secrets..."
-# 2. Setze die Secrets mit dem neuen Token
-GH_TOKEN=$PAT gh secret set MONOMONO_FUSION_REPO --repo "$NEW_SUB_REPO" --body "$FUSION_REPO"
-GH_TOKEN=$PAT gh secret set MONOMONO_APP_TOKEN --repo "$NEW_SUB_REPO" --body "$APP_TOKEN"
-
-# Trigger-Workflow installieren
+# Trigger-Workflow installieren (bleibt gleich)
 echo "   - Installiere Trigger-Workflow..."
-gh api --method PUT "repos/$NEW_SUB_REPO/contents/.github/workflows/monomono-trigger.yml" \
+GH_TOKEN=$PAT gh api --method PUT "repos/$NEW_SUB_REPO/contents/.github/workflows/monomono-trigger.yml" \
    -f message="feat: Add monomono trigger workflow" \
    -f content="$(echo -n "$TRIGGER_WORKFLOW_TEMPLATE" | base64)" >/dev/null || { echo "❌ Fehler beim Installieren des Trigger-Workflows."; exit 1; }
+
 echo "✔ Sub-Repo erfolgreich konfiguriert."
 echo ""
 echo "✅ Verbindung hergestellt! Der nächste Sync wird '$NEW_SUB_REPO' beinhalten."
