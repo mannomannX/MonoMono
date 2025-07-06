@@ -1,60 +1,111 @@
 #!/bin/bash
+# ==============================================================================
+# MONOMONO-DISCONNECT v1.2 (Flexibel & Robust)
+# ==============================================================================
+# Trennt ausgewählte Sub-Repos von einem Fusions-Repo oder das gesamte Setup.
+# Nutzt eine interaktive Auswahl und konsistente Authentifizierung.
+# ==============================================================================
 
 auth_check() {
-    # Prüft, ob der Benutzer bereits bei der GitHub CLI angemeldet ist.
     if ! gh auth status >/dev/null 2>&1; then
         echo "⚠️  Du scheinst nicht bei der GitHub CLI angemeldet zu sein."
-        echo "   Für diesen Befehl ist eine Authentifizierung erforderlich."
-        # Bietet an, den Anmeldeprozess direkt zu starten.
-        read -p "? Soll 'gh auth login' jetzt ausgeführt werden, um dich anzumelden? (j/n) " choice
-        if [[ "$choice" =~ ^[YyJj]$ ]]; then
-            # Führt den interaktiven Login-Prozess der GitHub CLI aus.
-            gh auth login
-        else
-            echo "❌ Abbruch: Authentifizierung ist für diesen Befehl erforderlich." >&2
-            exit 1
-        fi
+        read -p "? Soll 'gh auth login' jetzt ausgeführt werden? (j/n) " choice
+        if [[ "$choice" =~ ^[YyJj]$ ]]; then gh auth login; else echo "❌ Abbruch."; exit 1; fi
     fi
-    # Nach erfolgreicher Prüfung wird der Benutzername zur Bestätigung angezeigt.
     GITHUB_USER=$(gh api user --jq .login)
     echo "✔ Authentifiziert als '$GITHUB_USER'."
 }
 
+# --- HAUPTLOGIK ---
+auth_check
 
-# Entfernt alle MonoMono-Konfigurationen aus einem Setup.
-
-read -p "? Welches Fusions-Repo soll getrennt werden? (user/repo): " FUSION_REPO
+# 1. Ziel-Repo abfragen
+read -p "? Von welchem Fusions-Repo soll getrennt werden? (Format: user/repo): " FUSION_REPO
+FUSION_REPO=$(echo "$FUSION_REPO" | xargs)
 if [ -z "$FUSION_REPO" ]; then echo "❌ Abbruch: Kein Repo angegeben."; exit 1; fi
 
-# Logik zum Auslesen der Sub-Repos (wie im Upgrade-Skript)
-WORKFLOW_CONTENT=$(gh api "repos/$FUSION_REPO/contents/.github/workflows/sync.yml" --jq .content | base64 --decode 2>/dev/null)
-SUB_REPOS=$(echo "$WORKFLOW_CONTENT" | grep -oP "for repo in \\\$\(echo '([^']*)'" | head -n1 | sed -E "s/for repo in \\\$\(echo '([^']*)'/\1/")
+# 2. PAT für alle API-Operationen abfragen
+echo "--------------------------------------------------------------------"
+echo "🔑 INFO: Ein persönlicher Zugriffstoken (PAT) wird benötigt."
+echo "‼️  WICHTIG: Der Token braucht die Scopes 'repo' UND 'workflow'."
+echo "--------------------------------------------------------------------"
+PAT=""
+while [ -z "$PAT" ]; do
+    read -s -p "👉 Bitte füge den kopierten Token hier ein und drücke ENTER: " PAT; echo
+done
+SCOPES=$(curl -s -H "Authorization: token $PAT" https://api.github.com/ -I | grep -i x-oauth-scopes | sed 's/x-oauth-scopes: //g' | tr -d '\r')
+if ! [[ "$SCOPES" == *"repo"* && "$SCOPES" == *"workflow"* ]]; then
+    echo "❌ FEHLER: Der Token hat nicht die erforderlichen Scopes 'repo' und 'workflow'." >&2
+    exit 1
+fi
+echo "✔ Access Token ist gültig."
 
-if [ -z "$SUB_REPOS" ]; then
-    echo "⚠️ Konnte verbundene Sub-Repos nicht automatisch finden. Bitte manuell eingeben."
-    read -p "? Gib die zu trennenden Sub-Repos ein (user/repo1,user/repo2,...): " SUB_REPOS
+# 3. Bestehende Konfiguration auslesen (mit explizitem PAT)
+echo "-> Lese die aktuelle Konfiguration aus '$FUSION_REPO'..."
+WORKFLOW_RESPONSE=$(GH_TOKEN=$PAT gh api "repos/$FUSION_REPO/contents/.github/workflows/sync.yml" 2>/dev/null)
+if ! echo "$WORKFLOW_RESPONSE" | jq -e '.sha' > /dev/null; then
+    echo "❌ Fehler: Konnte 'sync.yml' im Repo '$FUSION_REPO' nicht lesen." >&2
+    exit 1
+fi
+WORKFLOW_CONTENT=$(echo "$WORKFLOW_RESPONSE" | jq -r .content | base64 --decode)
+WORKFLOW_SHA=$(echo "$WORKFLOW_RESPONSE" | jq -r .sha)
+SUB_REPOS_OLD=$(echo "$WORKFLOW_CONTENT" | grep -oP "for repo in \\\$\(echo '([^']*)'" | head -n1 | sed -E "s/for repo in \\\$\(echo '([^']*)'/\1/")
+
+if [ -z "$SUB_REPOS_OLD" ]; then
+    echo "ℹ️  Es sind keine Sub-Repos mit diesem Fusions-Repo verbunden."
+    exit 0
 fi
 
-echo "Folgende Repos werden getrennt: $SUB_REPOS"
+# 4. Interaktive Auswahl der zu trennenden Repos
+echo "-> Wähle die zu trennenden Sub-Repos:"
+echo "   (Navigation: Pfeiltasten, Auswahl: TAB, Bestätigen: ENTER)"
+REPOS_TO_DISCONNECT=$(echo "$SUB_REPOS_OLD" | tr ',' '\n' | fzf --multi --prompt="Trennen> ")
+if [ -z "$REPOS_TO_DISCONNECT" ]; then echo "❌ Abbruch: Keine Repos ausgewählt."; exit 1; fi
+
+echo "Folgende Repos werden getrennt:"
+echo "$REPOS_TO_DISCONNECT"
 read -p "? Fortfahren? (j/n) " choice
 if [[ ! "$choice" =~ ^[YyJj]$ ]]; then echo "❌ Abbruch."; exit 1; fi
 
-# Trennungslogik
-for repo in $(echo "$SUB_REPOS" | sed "s/,/ /g"); do
+# 5. Trennungslogik
+for repo in $REPOS_TO_DISCONNECT; do
     echo "-> Trenne $repo..."
-    # Lösche Secrets
-    gh secret delete MONOMONO_FUSION_REPO --repo "$repo"
-    gh secret delete MONOMONO_PAT --repo "$repo"
-    # Lösche Workflow
-    SHA=$(gh api repos/$repo/contents/.github/workflows/monomono-trigger.yml --jq .sha -t 2>/dev/null)
-    if [ -n "$SHA" ]; then
-        gh api --method DELETE repos/$repo/contents/.github/workflows/monomono-trigger.yml -f message="build: Remove monomono trigger" -f sha="$SHA" >/dev/null
+    # Lösche Secrets (mit explizitem PAT)
+    GH_TOKEN=$PAT gh secret delete MONOMONO_FUSION_REPO --repo "$repo"
+    GH_TOKEN=$PAT gh secret delete MONOMONO_APP_TOKEN --repo "$repo" # KORREKTUR: Korrekten Secret-Namen verwenden
+
+    # Lösche Workflow (mit explizitem PAT)
+    SHA_TRIGGER=$(GH_TOKEN=$PAT gh api "repos/$repo/contents/.github/workflows/monomono-trigger.yml" --jq .sha 2>/dev/null)
+    if [ -n "$SHA_TRIGGER" ]; then
+        GH_TOKEN=$PAT gh api --method DELETE "repos/$repo/contents/.github/workflows/monomono-trigger.yml" -f message="build: Remove monomono trigger" -f sha="$SHA_TRIGGER" >/dev/null
     fi
 done
 
-echo "✔ Alle Sub-Repos erfolgreich getrennt."
-read -p "? Soll auch das Fusions-Repo '$FUSION_REPO' auf GitHub gelöscht werden? (j/n) " delete_choice
+# 6. Fusions-Repo-Workflow aktualisieren
+echo "-> Aktualisiere Haupt-Workflow in '$FUSION_REPO'..."
+# Erstelle die neue, reduzierte Liste von Sub-Repos
+SUB_REPOS_NEW=$(echo ",$SUB_REPOS_OLD," | sed "s/,$(echo $REPOS_TO_DISCONNECT | sed 's/ /|/g'),/,/g" | sed 's/^,//;s/,$//')
+
+# Erstelle die neue Workflow-Datei (nur wenn noch Repos übrig sind)
+if [ -n "$SUB_REPOS_NEW" ]; then
+    # Ersetze die alte Liste durch die neue im Workflow-Template
+    NEW_WORKFLOW_CONTENT=$(echo "$WORKFLOW_CONTENT" | sed "s/'$SUB_REPOS_OLD'/'$SUB_REPOS_NEW'/")
+    GH_TOKEN=$PAT gh api --method PUT "repos/$FUSION_REPO/contents/.github/workflows/sync.yml" \
+       -f message="build: Disconnect sub-repo(s)" \
+       -f content="$(echo -n "$NEW_WORKFLOW_CONTENT" | base64)" \
+       -f sha="$WORKFLOW_SHA" >/dev/null
+    echo "✔ Haupt-Workflow wurde aktualisiert."
+else
+    echo "ℹ️  Keine Sub-Repos mehr verbunden. Der Haupt-Workflow wird nicht aktualisiert."
+fi
+
+echo "✔ Ausgewählte Sub-Repos erfolgreich getrennt."
+
+# 7. Optionales Löschen des Fusions-Repo
+read -p "? Soll auch das Fusions-Repo '$FUSION_REPO' selbst gelöscht werden? (j/n) " delete_choice
 if [[ "$delete_choice" =~ ^[YyJj]$ ]]; then
-    gh repo delete "$FUSION_REPO" --yes
+    GH_TOKEN=$PAT gh repo delete "$FUSION_REPO" --yes
     echo "✅ Fusions-Repo '$FUSION_REPO' wurde gelöscht."
 fi
+
+echo "✅ Prozess abgeschlossen."

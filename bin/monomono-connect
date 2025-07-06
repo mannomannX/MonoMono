@@ -116,8 +116,9 @@ jobs:
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
           git add .
           if ! git diff-index --quiet HEAD; then
-            git commit -m "feat: Connect new sub-repo and sync"
-            git push
+            git commit -m "feat: Sync sub-repos and update project map"
+            # FIX: Force-Push erzwingt das Überschreiben und vermeidet Race Conditions
+            git push --force
           else
             echo "No new changes found."
           fi

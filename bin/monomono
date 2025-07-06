@@ -284,7 +284,8 @@ jobs:
           git add .
           if ! git diff-index --quiet HEAD; then
             git commit -m "feat: Sync sub-repos and update project map"
-            git push
+            # FIX: Force-Push erzwingt das Überschreiben und vermeidet Race Conditions
+            git push --force
           else
             echo "No new changes found."
           fi
