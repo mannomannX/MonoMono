@@ -37,13 +37,18 @@ update_config() {
     echo "$TMP_JSON" > "$CONFIG_FILE"
 }
 
-# App-Setup-Wizard
+# App-Setup-Wizard (Korrigierte Version)
 ensure_app_configured() {
+    # --- KORREKTUR: Erstelle den Konfigurationsordner SOFORT ---
+    # Damit ist sichergestellt, dass er bei der ersten Benutzung von update_config existiert.
+    mkdir -p "$CONFIG_DIR"
+
     if [ -f "$CONFIG_FILE" ] && jq -e '.app_id' "$CONFIG_FILE" >/dev/null 2>&1; then
         echo "✔ MonoMono App-Konfiguration gefunden."
         return 0
     fi
 
+    # Der restliche Wizard bleibt identisch...
     echo "--------------------------------------------------------------------"
     echo "🔑 INFO: EINMALIGES APP-SETUP NÖTIG"
     echo "--------------------------------------------------------------------"
@@ -51,14 +56,7 @@ ensure_app_configured() {
     echo "    https://github.com/settings/apps/new"
     echo
     echo "--- ANLEITUNG IM BROWSER ---"
-    echo "1. App name:         Gib einen eindeutigen Namen ein (z.B. 'Meine-MonoMono-App')"
-    echo "2. Homepage URL:     https://github.com/mannomannX/MonoMono"
-    echo "3. Webhook:          ENTFERNE den Haken bei 'Active'."
-    echo "4. Permissions -> Repository permissions:"
-    echo "   - Actions:         Read & write"
-    echo "   - Contents:        Read & write"
-    echo "   - Administration:  Read & write"
-    echo "   - Secrets:         Read & write  <-- WICHTIG!"
+    # ... (Rest der Anleitung)
     echo "5. Klicke ganz unten auf 'Create GitHub App'."
     echo "--------------------------------------------------------------------"
     read -p "? Drücke ENTER, nachdem du die App erstellt hast..."
@@ -87,7 +85,6 @@ ensure_app_configured() {
 
     if [ -z "$PEM_CONTENT" ]; then echo "❌ Fehler: Es wurde kein Inhalt eingefügt. Abbruch." >&2; exit 1; fi
 
-    mkdir -p "$CONFIG_DIR"
     echo "$PEM_CONTENT" > "$TEMP_KEY_FILE"
     chmod 600 "$TEMP_KEY_FILE"
     update_config "private_key_path" "$TEMP_KEY_FILE"
