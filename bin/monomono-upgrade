@@ -66,6 +66,7 @@ if [[ ! "$choice" =~ ^[YyJj]$ ]]; then echo "❌ Abbruch durch Benutzer."; exit 
 
 # 5. Neueste Workflow-Vorlagen definieren
 # (Hier die Heredocs für SYNC_WORKFLOW_TEMPLATE und TRIGGER_WORKFLOW_TEMPLATE einfügen, genau wie in der letzten Version)
+# Vorlage für den Haupt-Workflow (Version 2.0 - Self-Contained)
 read -r -d '' SYNC_WORKFLOW_TEMPLATE << EOM
 name: 'Fusion-Repo Sync'
 on:
@@ -82,23 +83,45 @@ jobs:
         uses: actions/checkout@v4
         with:
           token: \${{ secrets.ACCESS_TOKEN }}
-      - name: Clone sub-repos
+
+      - name: Sync and Rebuild
         run: |
+          # == CONFIGURATION ==
+          # Die Liste der Repos steht jetzt nur noch hier an einer Stelle.
+          REPOS_TO_SYNC='${SUB_REPOS_NEW}' # Platzhalter wird vom Skript ersetzt
+
+          # == STEP 1: CLONE SUB-REPOS ==
           git config --global url."https://x-access-token:\${{ secrets.ACCESS_TOKEN }}@github.com/".insteadOf "https://github.com/"
-          for repo in \$(echo '${SUB_REPOS}' | sed 's/,/ /g'); do
+          for repo in \$(echo "\$REPOS_TO_SYNC" | sed 's/,/ /g'); do
             folder_name=\$(basename \$repo)
             echo "-> Cloning \$repo into \$folder_name..."
             rm -rf "\$folder_name"
             git clone --depth 1 https://github.com/\$repo.git "\$folder_name" && rm -rf "\$folder_name/.git"
           done
-      - name: Commit and push changes
-        run: |
+
+          # == STEP 2: CREATE INTELLIGENT README ==
+          sudo apt-get update -qq && sudo apt-get install -y tree >/dev/null
+          echo "# 🤖 MonoMono Fusions-Repo" > README.md
+          echo "" >> README.md
+          echo "## 🗺️ Projekt-Map" >> README.md
+          echo "### 🧩 Komponenten" >> README.md
+          for repo in \$(echo "\$REPOS_TO_SYNC" | sed 's/,/ /g'); do
+            echo "- **[\$(basename \$repo)](./\$(basename \$repo))** (Original: [\$repo](https://github.com/\$repo))" >> README.md
+          done
+          echo "" >> README.md
+          echo "### 🌳 Verzeichnisstruktur" >> README.md
+          echo "\`\`\`" >> README.md
+          tree -L 2 -I 'README.md' >> README.md
+          echo "\`\`\`" >> README.md
+          echo "" >> README.md
+          echo "> Letzte Aktualisierung: \$(date)" >> README.md
+
+          # == STEP 3: COMMIT AND PUSH ==
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
           git add .
           if ! git diff-index --quiet HEAD; then
             git commit -m "feat: Sync sub-repos and update project map"
-            # FIX: Force-Push erzwingt das Überschreiben und vermeidet Race Conditions
             git push --force
           else
             echo "No new changes found."
