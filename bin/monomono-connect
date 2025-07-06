@@ -123,7 +123,7 @@ echo "✔ Haupt-Workflow erfolgreich aktualisiert."
 # 7. Neues Sub-Repo konfigurieren
 echo "-> Konfiguriere neues Sub-Repo '$NEW_SUB_REPO'..."
 
-# Trigger-Workflow-Vorlage
+# Vorlage für den Trigger-Workflow. Nutzt den sicheren App-Token.
 read -r -d '' TRIGGER_WORKFLOW_TEMPLATE << EOM
 name: MonoMono Sync Trigger
 on:
@@ -136,16 +136,37 @@ jobs:
       - name: Send dispatch to fusion repo
         env:
           FUSION_REPO: \${{ secrets.MONOMONO_FUSION_REPO }}
-          GH_TOKEN: \${{ secrets.MONOMONO_PAT }}
+          GH_TOKEN: \${{ secrets.MONOMONO_APP_TOKEN }} # Nutzt den App-Token
         run: |
           if [ -z "\$FUSION_REPO" ] || [ -z "\$GH_TOKEN" ]; then echo "Fehler: Secrets nicht gesetzt."; exit 1; fi
           gh api --method POST "repos/\$FUSION_REPO/dispatches" -f "event_type=monomono-sync-event"
 EOM
 
-# Secrets setzen (benötigt den PAT)
+# Secrets setzen
 echo "   - Setze Secrets..."
-GH_TOKEN=$PAT gh secret set MONOMONO_FUSION_REPO --repo "$NEW_SUB_REPO" --body "$FUSION_REPO" || { echo "❌ Fehler beim Setzen von MONOMONO_FUSION_REPO."; exit 1; }
-GH_TOKEN=$PAT gh secret set MONOMONO_PAT --repo "$NEW_SUB_REPO" --body "$PAT" || { echo "❌ Fehler beim Setzen von MONOMONO_PAT."; exit 1; }
+# HINWEIS: Wir brauchen hier den PAT nur noch, um die API-Befehle auszuführen,
+# aber der Inhalt, den wir als Secret speichern, ist der sichere App-Token.
+# Dafür müssen wir den App-Token aber erst generieren. Das machen wir,
+# indem wir die Konfiguration des Hauptskripts laden.
+
+# Lade die Konfiguration, um einen App-Token zu generieren
+CONFIG_DIR="$HOME/.monomono"
+CONFIG_FILE="$CONFIG_DIR/config.json"
+if [ ! -f "$CONFIG_FILE" ]; then
+    echo "❌ Fehler: Konnte die MonoMono-Konfigurationsdatei nicht finden." >&2
+    echo "   Bitte führe zuerst das Hauptskript 'monomono' einmal vollständig aus." >&2
+    exit 1
+fi
+
+echo "‼️  AKTION ERFORDERLICH: Um einen sicheren App-Token zu setzen,"
+echo "   gehe zu den 'Secrets and variables' deines Fusions-Repos ($FUSION_REPO),"
+echo "   finde das 'ACCESS_TOKEN'-Secret und kopiere dessen Wert."
+read -s -p "👉 Bitte füge den Wert des ACCESS_TOKEN-Secrets hier ein: " APP_TOKEN; echo
+
+if [ -z "$APP_TOKEN" ]; then echo "❌ Fehler: Kein App-Token eingefügt."; exit 1; fi
+
+GH_TOKEN=$PAT gh secret set MONOMONO_FUSION_REPO --repo "$NEW_SUB_REPO" --body "$FUSION_REPO"
+GH_TOKEN=$PAT gh secret set MONOMONO_APP_TOKEN --repo "$NEW_SUB_REPO" --body "$APP_TOKEN"
 
 # Trigger-Workflow installieren
 echo "   - Installiere Trigger-Workflow..."
