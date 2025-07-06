@@ -1,81 +1,38 @@
 #!/bin/bash
-# ==============================================================================
-# MonoMono Disconnect-Skript v1.2 (final)
-# ==============================================================================
-CONFIG_FILE="$HOME/.monomono_config"
+# Entfernt alle MonoMono-Konfigurationen aus einem Setup.
 
-# Funktion zur PAT-Abfrage, falls nicht in der Config gefunden
-ensure_pat() {
-    if [ -f "$CONFIG_FILE" ]; then source "$CONFIG_FILE"; fi
-    if [ -z "$MONOMONO_PAT" ]; then
-        echo "🔑 Ein persönlicher Zugriffstoken (PAT) wird benötigt, um aufzuräumen."
-        read -s -p "👉 Bitte füge einen gültigen Token mit 'repo' und 'workflow' Rechten hier ein: " PAT; echo
-        HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: token $PAT" https://api.github.com/user)
-        if [ "$HTTP_STATUS" -ne 200 ]; then echo "❌ FEHLER: Der Token ist ungültig." >&2; exit 1; fi
-        MONOMONO_PAT=$PAT
+read -p "? Welches Fusions-Repo soll getrennt werden? (user/repo): " FUSION_REPO
+if [ -z "$FUSION_REPO" ]; then echo "❌ Abbruch: Kein Repo angegeben."; exit 1; fi
+
+# Logik zum Auslesen der Sub-Repos (wie im Upgrade-Skript)
+WORKFLOW_CONTENT=$(gh api "repos/$FUSION_REPO/contents/.github/workflows/sync.yml" --jq .content -t | base64 --decode 2>/dev/null)
+SUB_REPOS=$(echo "$WORKFLOW_CONTENT" | grep -oP "for repo in \\\$\(echo '([^']*)'" | head -n1 | sed -E "s/for repo in \\\$\(echo '([^']*)'/\1/")
+
+if [ -z "$SUB_REPOS" ]; then
+    echo "⚠️ Konnte verbundene Sub-Repos nicht automatisch finden. Bitte manuell eingeben."
+    read -p "? Gib die zu trennenden Sub-Repos ein (user/repo1,user/repo2,...): " SUB_REPOS
+fi
+
+echo "Folgende Repos werden getrennt: $SUB_REPOS"
+read -p "? Fortfahren? (j/n) " choice
+if [[ ! "$choice" =~ ^[YyJj]$ ]]; then echo "❌ Abbruch."; exit 1; fi
+
+# Trennungslogik
+for repo in $(echo "$SUB_REPOS" | sed "s/,/ /g"); do
+    echo "-> Trenne $repo..."
+    # Lösche Secrets
+    gh secret delete MONOMONO_FUSION_REPO --repo "$repo"
+    gh secret delete MONOMONO_PAT --repo "$repo"
+    # Lösche Workflow
+    SHA=$(gh api repos/$repo/contents/.github/workflows/monomono-trigger.yml --jq .sha -t 2>/dev/null)
+    if [ -n "$SHA" ]; then
+        gh api --method DELETE repos/$repo/contents/.github/workflows/monomono-trigger.yml -f message="build: Remove monomono trigger" -f sha="$SHA" >/dev/null
     fi
-    export GH_TOKEN=$MONOMONO_PAT
-    echo "✔ Authentifizierung für diese Sitzung gesetzt."
-}
-
-# --- HAUPTLOGIK ---
-echo "MonoMono Disconnect Assistent"
-echo "--------------------------------"
-read -p "? Gib den Pfad zum Fusions-Repo ein (z.B. user/repo): " FUSION_REPO
-if [ -z "$FUSION_REPO" ]; then echo "❌ Fehler: Eingabe darf nicht leer sein."; exit 1; fi
-read -p "? Gib die zu trennenden Sub-Repos ein (user/repo1,user/repo2,...): " SUB_REPOS
-if [ -z "$SUB_REPOS" ]; then echo "❌ Fehler: Eingabe darf nicht leer sein."; exit 1; fi
-
-ensure_pat
-
-# Trigger-Workflows und Secrets aus den Sub-Repos entfernen
-echo "-> Entferne Konfiguration aus den Sub-Repos..."
-for repo in $(echo $SUB_REPOS | sed "s/,/ /g"); do
-    echo "   - Bereinige Repo: $repo"
-    echo "     - Lösche Secrets..."
-    gh secret delete MONOMONO_FUSION_REPO --repo "$repo" >/dev/null 2>&1
-    gh secret delete MONOMONO_PAT --repo "$repo" >/dev/null 2>&1
-
-    echo "     - Entferne Trigger-Workflow..."
-    TEMP_SUB_DIR=$(mktemp -d)
-    git clone "https://x-access-token:$MONOMONO_PAT@github.com/$repo.git" "$TEMP_SUB_DIR" >/dev/null 2>&1
-    
-    if [ -f "$TEMP_SUB_DIR/.github/workflows/monomono-trigger.yml" ]; then
-        cd "$TEMP_SUB_DIR" || exit
-        git config user.name "MonoMono Script"
-        git rm .github/workflows/monomono-trigger.yml
-        git commit -m "chore: Remove MonoMono sync trigger"
-        git push >/dev/null 2>&1
-        cd - >/dev/null
-    else
-        echo "     - Kein Trigger-Workflow zum Entfernen gefunden."
-    fi
-    rm -rf "$TEMP_SUB_DIR"
 done
 
-echo
-read -p "? Sollen die Synchronisierungs-Workflows auch aus dem Fusions-Repo '$FUSION_REPO' entfernt werden? (j/n) " DELETE_WORKFLOW
-if [[ "$DELETE_WORKFLOW" =~ ^[YyJj]$ ]]; then
-    echo "-> Entferne Workflow-Datei aus $FUSION_REPO..."
-    TEMP_FUSION_DIR=$(mktemp -d)
-    git clone "https://x-access-token:$MONOMONO_PAT@github.com/$FUSION_REPO.git" "$TEMP_FUSION_DIR" >/dev/null 2>&1
-    if [ -f "$TEMP_FUSION_DIR/.github/workflows/sync.yml" ]; then
-        cd "$TEMP_FUSION_DIR" || exit
-        git config user.name "MonoMono Script"
-        git rm .github/workflows/sync.yml
-        git commit -m "chore: Remove MonoMono sync workflow"
-        git push >/dev/null 2>&1
-        cd - >/dev/null
-    fi
-    rm -rf "$TEMP_FUSION_DIR"
-fi
-
-
-echo
-read -p "? Soll das Fusions-Repo '$FUSION_REPO' selbst auch auf GitHub gelöscht werden? (Dies kann nicht rückgängig gemacht werden!) (j/n) " DELETE_REPO
-if [[ "$DELETE_REPO" =~ ^[YyJj]$ ]]; then
-    echo "-> Lösche Repository: $FUSION_REPO"
+echo "✔ Alle Sub-Repos erfolgreich getrennt."
+read -p "? Soll auch das Fusions-Repo '$FUSION_REPO' auf GitHub gelöscht werden? (j/n) " delete_choice
+if [[ "$delete_choice" =~ ^[YyJj]$ ]]; then
     gh repo delete "$FUSION_REPO" --yes
+    echo "✅ Fusions-Repo '$FUSION_REPO' wurde gelöscht."
 fi
-
-echo "✅ Trennung abgeschlossen."

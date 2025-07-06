@@ -1,53 +1,10 @@
 #!/bin/bash
-# ==============================================================================
-# MonoMono Update-Skript v2.1 (mit intelligenter PAT-Auth)
-# ==============================================================================
-CONFIG_FILE="$HOME/.monomono_config"
+# Löst einen manuellen Sync im angegebenen Fusions-Repo aus.
 
-# --- 1. LADE KONFIGURATION & AUTHENTIFIZIERE ---
-# Prüfe, ob die Konfigurationsdatei und der PAT vorhanden sind
-if [ -f "$CONFIG_FILE" ]; then
-    source "$CONFIG_FILE"
-fi
+read -p "? Welches Fusions-Repo soll manuell synchronisiert werden? (user/repo): " FUSION_REPO
+if [ -z "$FUSION_REPO" ]; then echo "❌ Abbruch: Kein Repo angegeben."; exit 1; fi
 
-# Wenn der PAT fehlt, starte den Erstellungs-Workflow
-if [ -z "$MONOMONO_PAT" ]; then
-    echo "--------------------------------------------------------------------"
-    echo "🔑 INFO: Ein persönlicher Zugriffstoken (PAT) wird für die Authentifizierung benötigt."
-    echo "‼️  AKTION ERFORDERLICH: Öffne https://github.com/settings/tokens/new"
-    echo "   Anleitung: Wähle die Scopes 'repo' UND 'workflow' aus, generiere den Token und kopiere ihn."
-    echo "--------------------------------------------------------------------"
-    PAT=""
-    while [ -z "$PAT" ]; do
-        read -s -p "👉 Bitte füge den kopierten Token hier ein und drücke ENTER: " PAT; echo
-    done
-    
-    # Validiere und speichere den neuen Token
-    echo "-> Überprüfe den Access Token..."
-    HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: token $PAT" https://api.github.com/user)
-    if [ "$HTTP_STATUS" -ne 200 ]; then
-        echo "❌ FEHLER: Der Token ist ungültig (HTTP-Status: $HTTP_STATUS)." >&2; exit 1
-    fi
-    echo "✔ Access Token ist gültig."
-    echo "MONOMONO_PAT='$PAT'" >> "$CONFIG_FILE"
-    MONOMONO_PAT=$PAT
-fi
+echo "-> Sende Sync-Anfrage an '$FUSION_REPO'..."
+gh workflow run sync.yml --repo "$FUSION_REPO"
 
-# Authentifiziere die aktuelle Sitzung mit dem Token
-export GH_TOKEN=$MONOMONO_PAT
-echo "✔ Authentifizierung für diese Sitzung gesetzt."
-echo "--------------------------------------------------------------------"
-
-# --- 2. WORKFLOW STARTEN ---
-if [ -z "$1" ]; then
-  echo "❌ Fehler: Du musst den Pfad zum Fusions-Repo angeben." >&2
-  echo "   Beispiel: monomono-update dein-name/dein-fusions-repo" >&2
-  exit 1
-fi
-REPO_PATH=$1
-
-echo "ℹ️ Starte den Update-Workflow für das Repo: $REPO_PATH"
-gh workflow run sync.yml --repo "$REPO_PATH" || { echo "❌ Fehler beim Starten des Workflows."; exit 1; }
-
-echo "✅ Befehl zum Aktualisieren gesendet. Verfolge den Fortschritt hier:"
-echo "   https://github.com/$REPO_PATH/actions"
+echo "✅ Anfrage gesendet. Verfolge den Fortschritt hier: https://github.com/$FUSION_REPO/actions"
