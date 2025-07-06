@@ -1,9 +1,8 @@
 #!/bin/bash
 # ==============================================================================
-# MONOMONO-DISCONNECT v1.4 (Final & Resilient)
+# MONOMONO-DISCONNECT v1.5 (Final & Edge-Case-Resistant)
 # ==============================================================================
-# Trennt ausgewählte Sub-Repos, ignoriert nicht-existente Ressourcen
-# und aktualisiert den Haupt-Workflow atomar.
+# Trennt ausgewählte Sub-Repos, auch wenn das Setup bereits beschädigt ist.
 # ==============================================================================
 
 auth_check() {
@@ -33,31 +32,38 @@ while [ -z "$PAT" ]; do
     read -s -p "👉 Bitte füge den kopierten Token hier ein: " PAT; echo
 done
 
-# 3. Bestehende Konfiguration auslesen
-echo "-> Lese die aktuelle Konfiguration aus '$FUSION_REPO'..."
+# 3. Bestehende Konfiguration auslesen (mit neuem Fehler-Handling)
+echo "-> Versuche, die Konfiguration aus '$FUSION_REPO' zu lesen..."
 WORKFLOW_RESPONSE=$(GH_TOKEN=$PAT gh api "repos/$FUSION_REPO/contents/.github/workflows/sync.yml" 2>/dev/null)
-if ! echo "$WORKFLOW_RESPONSE" | jq -e '.sha' > /dev/null; then
-    echo "❌ Fehler: Konnte 'sync.yml' im Repo '$FUSION_REPO' nicht lesen." >&2
-    exit 1
+SUB_REPOS_OLD=""
+
+if echo "$WORKFLOW_RESPONSE" | jq -e '.sha' > /dev/null; then
+    # FALL 1: sync.yml existiert, wir können die Repos automatisch extrahieren.
+    echo "✔ Konfiguration gefunden. Extrahiere verbundene Repos..."
+    WORKFLOW_CONTENT=$(echo "$WORKFLOW_RESPONSE" | jq -r .content | base64 --decode)
+    WORKFLOW_SHA=$(echo "$WORKFLOW_RESPONSE" | jq -r .sha)
+    SUB_REPOS_OLD=$(echo "$WORKFLOW_CONTENT" | grep -oP "REPOS_TO_SYNC='([^']*)'" | sed -E "s/REPOS_TO_SYNC='([^']*)'/\1/")
+else
+    # FALL 2: sync.yml existiert NICHT. Wir warnen den Benutzer und gehen in den manuellen Modus.
+    echo "⚠️  Warnung: Konnte 'sync.yml' im Repo '$FUSION_REPO' nicht finden."
+    echo "   Das Setup scheint bereits teilweise getrennt zu sein. Wechsle in den manuellen Modus."
 fi
-WORKFLOW_CONTENT=$(echo "$WORKFLOW_RESPONSE" | jq -r .content | base64 --decode)
-WORKFLOW_SHA=$(echo "$WORKFLOW_RESPONSE" | jq -r .sha)
-SUB_REPOS_OLD=$(echo "$WORKFLOW_CONTENT" | grep -oP "REPOS_TO_SYNC='([^']*)'" | sed -E "s/REPOS_TO_SYNC='([^']*)'/\1/")
 
-if [ -z "$SUB_REPOS_OLD" ]; then
-    echo "ℹ️  Es sind keine Sub-Repos mehr verbunden."
-    exit 0
+# 4. Auswahl der zu trennenden Repos
+if [ -n "$SUB_REPOS_OLD" ]; then
+    # Interaktive Auswahl, wenn die Liste automatisch gefunden wurde
+    echo "-> Wähle die zu trennenden Sub-Repos:"
+    REPOS_TO_DISCONNECT=$(echo "$SUB_REPOS_OLD" | tr ',' '\n' | fzf --multi --prompt="Trennen> ")
+else
+    # Manuelle Eingabe, wenn die Liste nicht gefunden wurde
+    read -p "? Bitte gib die zu trennenden Sub-Repos manuell ein (user/repo1,user/repo2,...): " REPOS_TO_DISCONNECT
 fi
 
-# 4. Interaktive Auswahl der zu trennenden Repos
-echo "-> Wähle die zu trennenden Sub-Repos:"
-REPOS_TO_DISCONNECT=$(echo "$SUB_REPOS_OLD" | tr ',' '\n' | fzf --multi --prompt="Trennen> ")
-if [ -z "$REPOS_TO_DISCONNECT" ]; then echo "❌ Abbruch: Keine Repos ausgewählt."; exit 1; fi
+if [ -z "$REPOS_TO_DISCONNECT" ]; then echo "❌ Abbruch: Keine Repos ausgewählt oder eingegeben."; exit 1; fi
 
-# 5. Trennungslogik (robust)
-for repo in $REPOS_TO_DISCONNECT; do
+# 5. Trennungslogik (bleibt gleich robust)
+for repo in $(echo "$REPOS_TO_DISCONNECT" | tr ',' ' '); do
     echo "-> Trenne $repo..."
-    # Fehler werden ignoriert, falls die Ressource schon weg ist
     GH_TOKEN=$PAT gh secret delete MONOMONO_FUSION_REPO --repo "$repo" 2>/dev/null || true
     GH_TOKEN=$PAT gh secret delete MONOMONO_APP_TOKEN --repo "$repo" 2>/dev/null || true
 
@@ -67,26 +73,26 @@ for repo in $REPOS_TO_DISCONNECT; do
     fi
 done
 
-# 6. Fusions-Repo-Workflow aktualisieren
-echo "-> Aktualisiere Haupt-Workflow in '$FUSION_REPO'..."
-# Robuste Methode, um die Repos aus der Liste zu entfernen
-SUB_REPOS_NEW=$SUB_REPOS_OLD
-for repo_to_remove in $REPOS_TO_DISCONNECT; do
-    SUB_REPOS_NEW=$(echo ",$SUB_REPOS_NEW," | sed "s#,$repo_to_remove,##g" | sed 's/^,//;s/,$//')
-done
+# 6. Haupt-Workflow aktualisieren (nur wenn er existiert)
+if [ -n "$WORKFLOW_SHA" ]; then
+    echo "-> Aktualisiere Haupt-Workflow in '$FUSION_REPO'..."
+    SUB_REPOS_NEW=$SUB_REPOS_OLD
+    for repo_to_remove in $(echo "$REPOS_TO_DISCONNECT" | tr ',' ' '); do
+        SUB_REPOS_NEW=$(echo ",$SUB_REPOS_NEW," | sed "s#,$repo_to_remove,##g" | sed 's/^,//;s/,$//')
+    done
 
-if [ -n "$SUB_REPOS_NEW" ]; then
-    # Ersetzt die alte Liste durch die neue im gesamten Workflow-Template
-    NEW_WORKFLOW_CONTENT=$(echo "$WORKFLOW_CONTENT" | sed "s|REPOS_TO_SYNC='$SUB_REPOS_OLD'|REPOS_TO_SYNC='$SUB_REPOS_NEW'|")
-    GH_TOKEN=$PAT gh api --method PUT "repos/$FUSION_REPO/contents/.github/workflows/sync.yml" \
-       -f message="build: Disconnect sub-repo(s)" \
-       -f content="$(echo -n "$NEW_WORKFLOW_CONTENT" | base64)" \
-       -f sha="$WORKFLOW_SHA" >/dev/null
-    echo "✔ Haupt-Workflow wurde aktualisiert."
-else
-    GH_TOKEN=$PAT gh api --method DELETE "repos/$FUSION_REPO/contents/.github/workflows/sync.yml" \
-       -f message="build: Remove final monomono workflow" -f sha="$WORKFLOW_SHA" > /dev/null
-    echo "✔ Alle Repos getrennt. Haupt-Workflow wurde entfernt."
+    if [ -n "$SUB_REPOS_NEW" ]; then
+        NEW_WORKFLOW_CONTENT=$(echo "$WORKFLOW_CONTENT" | sed "s|REPOS_TO_SYNC='$SUB_REPOS_OLD'|REPOS_TO_SYNC='$SUB_REPOS_NEW'|")
+        GH_TOKEN=$PAT gh api --method PUT "repos/$FUSION_REPO/contents/.github/workflows/sync.yml" \
+           -f message="build: Disconnect sub-repo(s)" \
+           -f content="$(echo -n "$NEW_WORKFLOW_CONTENT" | base64)" \
+           -f sha="$WORKFLOW_SHA" >/dev/null
+        echo "✔ Haupt-Workflow wurde aktualisiert."
+    else
+        GH_TOKEN=$PAT gh api --method DELETE "repos/$FUSION_REPO/contents/.github/workflows/sync.yml" \
+           -f message="build: Remove final monomono workflow" -f sha="$WORKFLOW_SHA" > /dev/null
+        echo "✔ Alle Repos getrennt. Haupt-Workflow wurde entfernt."
+    fi
 fi
 
 echo "✅ Prozess abgeschlossen."
