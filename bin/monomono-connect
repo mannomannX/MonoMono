@@ -1,122 +1,85 @@
 #!/bin/bash
 # ==============================================================================
-# MonoMono Connect-Skript v1.1 (final)
+# MONOMONO-CONNECT v1.0 (Standalone & Fehlerfest)
 # ==============================================================================
-# Verbindet ein bestehendes Repository mit dem MonoMono-System, indem es den
-# Update-Workflow installiert und die nötigen Verbindungen (Secrets)
-# für die Synchronisierung einrichtet.
+# Verbindet ein neues Sub-Repo mit einem bestehenden Fusions-Repo.
+# Funktioniert eigenständig und führt den Benutzer sicher durch den Prozess.
 # ==============================================================================
 
+# --- Hilfsfunktionen ---
 auth_check() {
-    # Prüft, ob der Benutzer bereits bei der GitHub CLI angemeldet ist.
     if ! gh auth status >/dev/null 2>&1; then
         echo "⚠️  Du scheinst nicht bei der GitHub CLI angemeldet zu sein."
         echo "   Für diesen Befehl ist eine Authentifizierung erforderlich."
-        # Bietet an, den Anmeldeprozess direkt zu starten.
         read -p "? Soll 'gh auth login' jetzt ausgeführt werden, um dich anzumelden? (j/n) " choice
         if [[ "$choice" =~ ^[YyJj]$ ]]; then
-            # Führt den interaktiven Login-Prozess der GitHub CLI aus.
             gh auth login
         else
             echo "❌ Abbruch: Authentifizierung ist für diesen Befehl erforderlich." >&2
             exit 1
         fi
     fi
-    # Nach erfolgreicher Prüfung wird der Benutzername zur Bestätigung angezeigt.
     GITHUB_USER=$(gh api user --jq .login)
     echo "✔ Authentifiziert als '$GITHUB_USER'."
 }
 
-
-CONFIG_FILE="$HOME/.monomono_config"
-
-# Funktion zur PAT-Abfrage, falls nicht in der Config gefunden
-ensure_pat() {
-    if [ -f "$CONFIG_FILE" ]; then source "$CONFIG_FILE"; fi
-    if [ -z "$MONOMONO_PAT" ]; then
-        echo "--------------------------------------------------------------------"
-        echo "🔑 INFO: Ein persönlicher Zugriffstoken (PAT) wird für die Authentifizierung benötigt."
-        echo "‼️  AKTION ERFORDERLICH: Öffne https://github.com/settings/tokens/new"
-        echo "   Anleitung: Wähle die Scopes 'repo' UND 'workflow' aus, generiere den Token und kopiere ihn."
-        echo "--------------------------------------------------------------------"
-        PAT_INPUT=""
-        while [ -z "$PAT_INPUT" ]; do
-            read -s -p "👉 Bitte füge den kopierten Token hier ein und drücke ENTER: " PAT_INPUT; echo
-        done
-        
-        echo "-> Überprüfe den Access Token..."
-        HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: token $PAT_INPUT" https://api.github.com/user)
-        if [ "$HTTP_STATUS" -ne 200 ]; then echo "❌ FEHLER: Der Token ist ungültig (HTTP-Status: $HTTP_STATUS)." >&2; exit 1; fi
-        
-        echo "✔ Access Token ist gültig."
-        # Speichere den neuen Token für die Zukunft
-        echo "MONOMONO_PAT='$PAT_INPUT'" >> "$CONFIG_FILE"
-        MONOMONO_PAT=$PAT_INPUT
-    fi
-    # Authentifiziere die aktuelle Sitzung mit dem Token
-    export GH_TOKEN=$MONOMONO_PAT
-    echo "✔ Authentifizierung für diese Sitzung gesetzt."
-}
-
 # --- HAUPTLOGIK ---
-echo "MonoMono Connect Assistent"
-echo "---------------------------"
-echo "Dieses Skript installiert den Update-Workflow in einem bestehenden Repository."
-echo
+auth_check
 
-ensure_pat
-GITHUB_USER=$(curl -s -H "Authorization: token $MONOMONO_PAT" https://api.github.com/user | jq -r '.login')
-echo "✔ Authentifiziert als Benutzer: $GITHUB_USER"
+# 1. Inputs sammeln
+read -p "? Zu welchem Fusions-Repo soll verbunden werden? (Format: user/repo): " FUSION_REPO
+if [ -z "$FUSION_REPO" ]; then echo "❌ Abbruch: Kein Fusions-Repo angegeben."; exit 1; fi
 
-read -p "? Welches bestehende Repo soll verbunden werden? (z.B. $GITHUB_USER/mein-repo): " FUSION_REPO
-if [ -z "$FUSION_REPO" ]; then echo "❌ Fehler: Eingabe darf nicht leer sein."; exit 1; fi
+read -p "? Welches neue Sub-Repo soll verbunden werden? (Format: user/repo): " NEW_SUB_REPO
+if [ -z "$NEW_SUB_REPO" ]; then echo "❌ Abbruch: Kein Sub-Repo angegeben."; exit 1; fi
 
-echo "-> Lade verfügbare Repositories für die Auswahl..."
-REPOS_LIST=$(curl -s -H "Authorization: token $MONOMONO_PAT" "https://api.github.com/user/repos?type=owner&per_page=100" | jq -r '.[].full_name')
-echo -e "? Welche Sub-Repos sollen damit verbunden werden?"
-SELECTED_REPOS=$(echo "$REPOS_LIST" | fzf --multi --height 40% --border --prompt="Select> ")
-if [ -z "$SELECTED_REPOS" ]; then echo "❌ Aborted: No repositories selected."; exit 1; fi
-SUB_REPOS=$(echo "$SELECTED_REPOS" | tr '\n' ',' | sed 's/,$//')
+# 2. PAT für Secret-Management abfragen
+echo "--------------------------------------------------------------------"
+echo "🔑 INFO: Ein persönlicher Zugriffstoken (PAT) wird benötigt, um Secrets zu setzen."
+echo "‼️  AKTION ERFORDERLICH: Bitte erstelle einen Token mit den Scopes 'repo' UND 'workflow'."
+echo "   Falls du schon einen hast, füge ihn einfach erneut ein."
+echo "   URL: https://github.com/settings/tokens/new"
+echo "--------------------------------------------------------------------"
+PAT=""
+while [ -z "$PAT" ]; do
+    read -s -p "👉 Bitte füge den kopierten Token hier ein und drücke ENTER: " PAT; echo
+done
+echo "-> Überprüfe den Access Token..."
+HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: token $PAT" https://api.github.com/user)
+if [ "$HTTP_STATUS" -ne 200 ]; then
+    echo "❌ FEHLER: Der Token ist ungültig oder hat nicht die nötigen Rechte (HTTP-Status: $HTTP_STATUS)." >&2; exit 1
+fi
+echo "✔ Access Token ist gültig."
 
-# Ab hier ist die Logik identisch zum Hauptskript monomono:
-# - Update-Optionen abfragen (Schedule)
-# - Secret setzen
-# - Workflow generieren (mit dem Inhalt der neuesten Version)
-# - Workflow pushen
-# - Workflow starten
+# 3. Bestehende Konfiguration auslesen
+echo "-> Lese die aktuelle Konfiguration aus '$FUSION_REPO'..."
+WORKFLOW_RESPONSE=$(gh api "repos/$FUSION_REPO/contents/.github/workflows/sync.yml" 2>/dev/null)
+if [ -z "$WORKFLOW_RESPONSE" ]; then
+    echo "❌ Fehler: Konnte 'sync.yml' im Repo '$FUSION_REPO' nicht finden. Ist der Repo-Name korrekt?" >&2
+    exit 1
+fi
+WORKFLOW_CONTENT=$(echo "$WORKFLOW_RESPONSE" | jq -r .content | base64 --decode)
+WORKFLOW_SHA=$(echo "$WORKFLOW_RESPONSE" | jq -r .sha)
 
-echo "-------------------------------------------"
-echo "⚙️ Konfiguriere die Update-Methoden für '$FUSION_REPO'..."
-CRON_SCHEDULE=""
-read -p "? Möchtest du einen automatischen, zeitgesteuerten Sync aktivieren? (j/n) " ACTIVATE_SCHEDULE
-if [[ "$ACTIVATE_SCHEDULE" =~ ^[YyJj]$ ]]; then
-    read -p "? In welchem Intervall (in Stunden) soll der Sync laufen? (1-24) " SCHEDULE_HOURS
-    CRON_SCHEDULE="  schedule:\n    - cron: '0 */${SCHEDULE_HOURS:-24} * * *'"
+# 4. Sub-Repo-Liste extrahieren und erweitern
+SUB_REPOS_OLD=$(echo "$WORKFLOW_CONTENT" | grep -oP "for repo in \\\$\(echo '([^']*)'" | head -n1 | sed -E "s/for repo in \\\$\(echo '([^']*)'/\1/")
+
+# Fehlerfest: Prüfen, ob das Repo bereits verbunden ist
+if [[ ",$SUB_REPOS_OLD," == *",$NEW_SUB_REPO,"* ]]; then
+    echo "⚠️  Warnung: Das Repository '$NEW_SUB_REPO' ist bereits mit diesem Fusions-Repo verbunden."
+    exit 0
 fi
 
-SETUP_WEBHOOKS=false
-read -p "? Sollen Echtzeit-Updates über Sub-Repo-Workflows eingerichtet werden? (y/n) " ACTIVATE_WEBHOOKS
-if [[ "$ACTIVATE_WEBHOOKS" =~ ^[YyJj]$ ]]; then
-    SETUP_WEBHOOKS=true
-fi
+SUB_REPOS_NEW="$SUB_REPOS_OLD,$NEW_SUB_REPO"
+echo "✔ Neue Repo-Liste: $SUB_REPOS_NEW"
 
-
-echo "-> Speichere den Token sicher als 'ACCESS_TOKEN' Secret im Repo..."
-echo -n "$MONOMONO_PAT" | gh secret set ACCESS_TOKEN --repo "$FUSION_REPO" || { echo "❌ Fehler beim Setzen des Secrets."; exit 1; }
-echo "✔ Secret erfolgreich im Repository '$FUSION_REPO' gespeichert."
-
-WORKFLOW_NAME="Fusion-Repo Erstellen & Aktualisieren"
-ON_TRIGGERS="on:\n  workflow_dispatch:"
-if [ -n "$CRON_SCHEDULE" ]; then
-    ON_TRIGGERS+="\n$CRON_SCHEDULE"
-fi
-if $SETUP_WEBHOOKS; then
-    ON_TRIGGERS+="\n  repository_dispatch:\n    types: [monomono-sync-event]"
-fi
-
-read -r -d '' WORKFLOW_CONTENT << EOM
-name: '$WORKFLOW_NAME'
-$ON_TRIGGERS
+# 5. Neue Workflow-Vorlage erstellen
+read -r -d '' SYNC_WORKFLOW_TEMPLATE << EOM
+name: 'Fusion-Repo Sync'
+on:
+  workflow_dispatch:
+  repository_dispatch:
+    types: [monomono-sync-event]
 jobs:
   sync-repos:
     runs-on: ubuntu-latest
@@ -130,79 +93,38 @@ jobs:
       - name: Clone sub-repos
         run: |
           git config --global url."https://x-access-token:\${{ secrets.ACCESS_TOKEN }}@github.com/".insteadOf "https://github.com/"
-          REPOS_TO_SYNC=\${{ inputs.repos || '$SUB_REPOS' }}
-          for repo in \$(echo "\$REPOS_TO_SYNC" | sed 's/,/ /g'); do
+          for repo in \$(echo '${SUB_REPOS_NEW}' | sed 's/,/ /g'); do
             folder_name=\$(basename \$repo)
             echo "-> Cloning \$repo into \$folder_name..."
             rm -rf "\$folder_name"
             git clone --depth 1 https://github.com/\$repo.git "\$folder_name" && rm -rf "\$folder_name/.git"
           done
-      - name: Create intelligent README
-        run: |
-          sudo apt-get update && sudo apt-get install -y tree
-          echo "# 🤖 MonoMono Fusions-Repo" > README.md
-          echo "" >> README.md
-          echo "Dieses Repository ist eine automatisch generierte und synchronisierte Zusammenführung mehrerer einzelner Repositories, erstellt von [MonoMono](https://github.com/mannomannX/MonoMono)." >> README.md
-          echo "Es dient als zentraler Überblick und für übergreifende Analysen." >> README.md
-          echo "" >> README.md
-          echo "---" >> README.md
-          echo "" >> README.md
-          echo "## 🗺️ Projekt-Map" >> README.md
-          echo "" >> README.md
-          echo "### 🧩 Projekt-Komponenten" >> README.md
-          echo "Die folgenden Ordner sind die eigentlichen Projekt-Komponenten. Jede ist ein Klon eines eigenständigen Sub-Repos:" >> README.md
-          for repo in \$(echo "\${{ inputs.repos || '$SUB_REPOS' }}" | sed 's/,/ /g'); do
-            echo "- **[\$(basename \$repo)](./\$(basename \$repo))** (Original: [\$repo](https://github.com/\$repo))" >> README.md
-          done
-          echo "" >> README.md
-          echo "### 🛠️ MonoMono-Infrastruktur" >> README.md
-          echo "Die folgenden Dateien und Ordner sind Teil der MonoMono-Automatisierung und nicht Teil der Kernprojekte:" >> README.md
-          echo "- **[.github/workflows/sync.yml](./.github/workflows/sync.yml)**: Der GitHub Actions Workflow, der dieses Repo aktuell hält." >> README.md
-          echo "" >> README.md
-          echo "### 🌳 Visuelle Verzeichnisstruktur" >> README.md
-          echo \`\`\` >> README.md
-          tree -L 2 -I 'README.md' >> README.md
-          echo \`\`\` >> README.md
-          echo "" >> README.md
-          echo "> Letzte Aktualisierung: \$(date)" >> README.md
       - name: Commit and push changes
         run: |
           git config --global user.name 'github-actions[bot]'
           git config --global user.email 'github-actions[bot]@users.noreply.github.com'
           git add .
           if ! git diff-index --quiet HEAD; then
-            git commit -m "feat(workflow): Connect to MonoMono"
+            git commit -m "feat: Connect new sub-repo and sync"
             git push
           else
-            echo "No changes to workflow found."
+            echo "No new changes found."
           fi
 EOM
 
-echo "-> Richte temporären lokalen Klon ein, um den Workflow zu pushen..."
-TEMP_DIR=$(mktemp -d)
-cd "$TEMP_DIR" || exit 1
-git clone "https://x-access-token:$MONOMONO_PAT@github.com/$FUSION_REPO.git" . >/dev/null 2>&1 || { echo "❌ Fehler beim Klonen des Ziel-Repos."; rm -rf "$TEMP_DIR"; exit 1; }
-mkdir -p .github/workflows
-echo -e "$WORKFLOW_CONTENT" > .github/workflows/sync.yml
-git config user.name "MonoMono Connect"
-git config user.email "bot@users.noreply.github.com"
-git add .
-git commit -m "feat(workflow): Connect to MonoMono sync system"
-git push || { echo "❌ Fehler beim Pushen des Workflows."; rm -rf "$TEMP_DIR"; exit 1; }
-cd - >/dev/null
-rm -rf "$TEMP_DIR"
-echo "✔ Workflow-Datei erfolgreich nach '$FUSION_REPO' gepusht."
+# 6. Haupt-Workflow im Fusions-Repo aktualisieren
+echo "-> Aktualisiere Haupt-Workflow in '$FUSION_REPO'..."
+gh api --method PUT "repos/$FUSION_REPO/contents/.github/workflows/sync.yml" \
+   -f message="build: Connect new sub-repo ($NEW_SUB_REPO)" \
+   -f content="$(echo -n "$SYNC_WORKFLOW_TEMPLATE" | base64)" \
+   -f sha="$WORKFLOW_SHA" >/dev/null || { echo "❌ Fehler beim Aktualisieren des Haupt-Workflows."; exit 1; }
+echo "✔ Haupt-Workflow erfolgreich aktualisiert."
 
+# 7. Neues Sub-Repo konfigurieren
+echo "-> Konfiguriere neues Sub-Repo '$NEW_SUB_REPO'..."
 
-if [[ "$SETUP_WEBHOOKS" = true ]]; then
-    echo "-> Richte Echtzeit-Synchronisierung für die Sub-Repos ein..."
-
-    # ==============================================================================
-    # ✨ HIER IST DER FINALE FIX ✨
-    # Wir übergeben den PAT-Secret korrekt an die GH_TOKEN-Umgebungsvariable.
-    # ==============================================================================
-    read -r -d '' TRIGGER_WORKFLOW_CONTENT << EOM
-# MonoMono Trigger Workflow
+# Trigger-Workflow-Vorlage
+read -r -d '' TRIGGER_WORKFLOW_TEMPLATE << EOM
 name: MonoMono Sync Trigger
 on:
   push:
@@ -216,57 +138,20 @@ jobs:
           FUSION_REPO: \${{ secrets.MONOMONO_FUSION_REPO }}
           GH_TOKEN: \${{ secrets.MONOMONO_PAT }}
         run: |
-          if [ -z "\$FUSION_REPO" ]; then
-            echo "Fehler: Secret MONOMONO_FUSION_REPO ist nicht gesetzt."
-            exit 1
-          fi
-          
-          echo "Sending dispatch to \$FUSION_REPO"
+          if [ -z "\$FUSION_REPO" ] || [ -z "\$GH_TOKEN" ]; then echo "Fehler: Secrets nicht gesetzt."; exit 1; fi
           gh api --method POST "repos/\$FUSION_REPO/dispatches" -f "event_type=monomono-sync-event"
 EOM
 
-    for repo in $(echo $SUB_REPOS | sed "s/,/ /g"); do
-        echo "   - Konfiguriere Sub-Repo: $repo"
-        
-        FUSION_REPO_FULL_NAME="$GITHUB_USER/$FUSION_REPO_NAME"
-        echo "     - Setze Secrets im Sub-Repo..."
-        echo -n "$FUSION_REPO_FULL_NAME" | gh secret set MONOMONO_FUSION_REPO --repo "$repo"
-        echo -n "$PAT" | gh secret set MONOMONO_PAT --repo "$repo"
+# Secrets setzen (benötigt den PAT)
+echo "   - Setze Secrets..."
+GH_TOKEN=$PAT gh secret set MONOMONO_FUSION_REPO --repo "$NEW_SUB_REPO" --body "$FUSION_REPO" || { echo "❌ Fehler beim Setzen von MONOMONO_FUSION_REPO."; exit 1; }
+GH_TOKEN=$PAT gh secret set MONOMONO_PAT --repo "$NEW_SUB_REPO" --body "$PAT" || { echo "❌ Fehler beim Setzen von MONOMONO_PAT."; exit 1; }
 
-        echo "     - Pushe Trigger-Workflow zum Sub-Repo..."
-        TEMP_SUB_DIR=$(mktemp -d)
-        git clone "https://x-access-token:$PAT@github.com/$repo.git" "$TEMP_SUB_DIR" >/dev/null 2>&1
-        
-        mkdir -p "$TEMP_SUB_DIR/.github/workflows"
-        echo -e "$TRIGGER_WORKFLOW_CONTENT" > "$TEMP_SUB_DIR/.github/workflows/monomono-trigger.yml"
-        
-        cd "$TEMP_SUB_DIR" || exit
-        git config user.name "MonoMono Script"
-        git add .github/workflows/monomono-trigger.yml
-        if ! git diff-index --quiet HEAD; then
-            git commit -m "feat: Add MonoMono sync trigger"
-            git push
-        else
-            echo "     - Trigger-Workflow ist bereits aktuell."
-        fi
-        cd - >/dev/null
-        rm -rf "$TEMP_SUB_DIR"
-    done
-fi
-
-# 9. WORKFLOW STARTEN
-echo "-> Warte, bis der Workflow auf GitHub sichtbar ist..."
-WORKFLOW_FOUND=false
-for i in {1..5}; do
-  if gh workflow list --repo "$GITHUB_USER/$FUSION_REPO_NAME" 2>/dev/null | grep -q "$WORKFLOW_NAME"; then
-    echo "✔ Workflow gefunden."; WORKFLOW_FOUND=true; break;
-  fi
-  if [ $i -lt 5 ]; then echo "   - Noch nicht gefunden, versuche es in 2 Sekunden erneut..."; sleep 2; fi
-done
-if ! $WORKFLOW_FOUND; then echo "❌ Error: Workflow not found after 10 seconds."; exit 1; fi
-echo "-> Starte den ersten Lauf des Workflows..."
-gh workflow run sync.yml --repo "$GITHUB_USER/$FUSION_REPO_NAME" || { echo "❌ Error starting the workflow."; exit 1; }
-
-echo
-echo "✅ Verbindung für '$FUSION_REPO' erfolgreich hergestellt."
-echo "   Führe 'monomono-update $FUSION_REPO' aus, um die erste Synchronisierung zu starten, sofern nicht automatisch."
+# Trigger-Workflow installieren
+echo "   - Installiere Trigger-Workflow..."
+gh api --method PUT "repos/$NEW_SUB_REPO/contents/.github/workflows/monomono-trigger.yml" \
+   -f message="feat: Add monomono trigger workflow" \
+   -f content="$(echo -n "$TRIGGER_WORKFLOW_TEMPLATE" | base64)" >/dev/null || { echo "❌ Fehler beim Installieren des Trigger-Workflows."; exit 1; }
+echo "✔ Sub-Repo erfolgreich konfiguriert."
+echo ""
+echo "✅ Verbindung hergestellt! Der nächste Sync wird '$NEW_SUB_REPO' beinhalten."
