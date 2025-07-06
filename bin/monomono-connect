@@ -20,11 +20,13 @@ auth_check() {
 # --- HAUPTLOGIK ---
 auth_check
 
-# 1. Inputs sammeln
+# 1. Inputs sammeln (NEU: mit automatischer Bereinigung)
 read -p "? Zu welchem Fusions-Repo soll verbunden werden? (Format: user/repo): " FUSION_REPO
+FUSION_REPO=$(echo "$FUSION_REPO" | xargs) # Entfernt führende/folgende Leerzeichen
 if [ -z "$FUSION_REPO" ]; then echo "❌ Abbruch: Kein Fusions-Repo angegeben."; exit 1; fi
 
 read -p "? Welches neue Sub-Repo soll verbunden werden? (Format: user/repo): " NEW_SUB_REPO
+NEW_SUB_REPO=$(echo "$NEW_SUB_REPO" | xargs) # Entfernt führende/folgende Leerzeichen
 if [ -z "$NEW_SUB_REPO" ]; then echo "❌ Abbruch: Kein Sub-Repo angegeben."; exit 1; fi
 
 # 2. PAT für Secret-Management abfragen
