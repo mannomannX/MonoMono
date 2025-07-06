@@ -27,7 +27,7 @@ read -p "? Welches Fusions-Repo soll getrennt werden? (user/repo): " FUSION_REPO
 if [ -z "$FUSION_REPO" ]; then echo "❌ Abbruch: Kein Repo angegeben."; exit 1; fi
 
 # Logik zum Auslesen der Sub-Repos (wie im Upgrade-Skript)
-WORKFLOW_CONTENT=$(gh api "repos/$FUSION_REPO/contents/.github/workflows/sync.yml" --jq .content -t | base64 --decode 2>/dev/null)
+WORKFLOW_CONTENT=$(gh api "repos/$FUSION_REPO/contents/.github/workflows/sync.yml" --jq .content | base64 --decode 2>/dev/null)
 SUB_REPOS=$(echo "$WORKFLOW_CONTENT" | grep -oP "for repo in \\\$\(echo '([^']*)'" | head -n1 | sed -E "s/for repo in \\\$\(echo '([^']*)'/\1/")
 
 if [ -z "$SUB_REPOS" ]; then

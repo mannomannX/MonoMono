@@ -1,6 +1,6 @@
 #!/bin/bash
 # ==============================================================================
-# MONOMONO-UPGRADE v1.1 (Standalone)
+# MONOMONO-UPGRADE v1.2 (Final & Cleaned)
 # ==============================================================================
 # Aktualisiert ein bestehendes Fusions-Repo und alle verbundenen Sub-Repos
 # auf die neuesten Workflow-Versionen. Funktioniert eigenständig.
@@ -10,35 +10,37 @@ auth_check() {
     # Prüft, ob der Benutzer bereits bei der GitHub CLI angemeldet ist.
     if ! gh auth status >/dev/null 2>&1; then
         echo "⚠️  Du scheinst nicht bei der GitHub CLI angemeldet zu sein."
-        echo "   Für diesen Befehl ist eine Authentifizierung erforderlich."
-        # Bietet an, den Anmeldeprozess direkt zu starten.
-        read -p "? Soll 'gh auth login' jetzt ausgeführt werden, um dich anzumelden? (j/n) " choice
+        read -p "? Soll 'gh auth login' jetzt ausgeführt werden? (j/n) " choice
         if [[ "$choice" =~ ^[YyJj]$ ]]; then
-            # Führt den interaktiven Login-Prozess der GitHub CLI aus.
             gh auth login
         else
-            echo "❌ Abbruch: Authentifizierung ist für diesen Befehl erforderlich." >&2
+            echo "❌ Abbruch: Authentifizierung ist erforderlich." >&2
             exit 1
         fi
     fi
-    # Nach erfolgreicher Prüfung wird der Benutzername zur Bestätigung angezeigt.
     GITHUB_USER=$(gh api user --jq .login)
     echo "✔ Authentifiziert als '$GITHUB_USER'."
 }
 
+# --- HAUPTLOGIK ---
+auth_check
 
 # 1. Ziel-Repo abfragen
 read -p "? Welches Fusions-Repo soll aktualisiert werden? (Format: user/repo): " FUSION_REPO
 if [ -z "$FUSION_REPO" ]; then echo "❌ Abbruch: Kein Repo angegeben."; exit 1; fi
 
+# 2. Workflow auslesen und Sub-Repos extrahieren (ROBUSTE METHODE)
 echo "-> Lese die aktuelle Konfiguration aus '$FUSION_REPO'..."
+WORKFLOW_RESPONSE=$(gh api "repos/$FUSION_REPO/contents/.github/workflows/sync.yml" 2>/dev/null)
 
-# 2. Workflow auslesen und Sub-Repos extrahieren
-WORKFLOW_CONTENT=$(gh api "repos/$FUSION_REPO/contents/.github/workflows/sync.yml" --jq .content -t | base64 --decode 2>/dev/null)
-if [ -z "$WORKFLOW_CONTENT" ]; then
-    echo "❌ Fehler: Konnte 'sync.yml' im Repo '$FUSION_REPO' nicht finden oder lesen." >&2
+if ! echo "$WORKFLOW_RESPONSE" | jq -e '.sha' > /dev/null; then
+    echo "❌ Fehler: Konnte 'sync.yml' im Repo '$FUSION_REPO' nicht lesen oder sie ist fehlerhaft." >&2
+    echo "   Stelle sicher, dass der Repo-Name korrekt ist und du bei 'gh' angemeldet bist." >&2
     exit 1
 fi
+
+WORKFLOW_CONTENT=$(echo "$WORKFLOW_RESPONSE" | jq -r .content | base64 --decode)
+WORKFLOW_SHA=$(echo "$WORKFLOW_RESPONSE" | jq -r .sha) # KORREKTUR: Wir verwenden diese Variable
 
 SUB_REPOS=$(echo "$WORKFLOW_CONTENT" | grep -oP "for repo in \\\$\(echo '([^']*)'" | head -n1 | sed -E "s/for repo in \\\$\(echo '([^']*)'/\1/")
 if [ -z "$SUB_REPOS" ]; then
@@ -47,12 +49,11 @@ if [ -z "$SUB_REPOS" ]; then
 fi
 echo "✔ Folgende Sub-Repos gefunden: $SUB_REPOS"
 
-# 3. Bestätigung
+# 3. Bestätigung des Benutzers
 read -p "? Fortfahren und die Workflows aktualisieren? (j/n) " choice
 if [[ ! "$choice" =~ ^[YyJj]$ ]]; then echo "❌ Abbruch durch Benutzer."; exit 1; fi
 
 # 4. Neueste Workflow-Versionen direkt hier definieren
-# Vorlage für den Haupt-Workflow
 read -r -d '' SYNC_WORKFLOW_TEMPLATE << EOM
 name: 'Fusion-Repo Sync'
 on:
@@ -91,7 +92,6 @@ jobs:
           fi
 EOM
 
-# Vorlage für den Trigger-Workflow (aktualisiert)
 read -r -d '' TRIGGER_WORKFLOW_TEMPLATE << EOM
 name: MonoMono Sync Trigger
 on:
@@ -104,7 +104,7 @@ jobs:
       - name: Send dispatch to fusion repo
         env:
           FUSION_REPO: \${{ secrets.MONOMONO_FUSION_REPO }}
-          GH_TOKEN: \${{ secrets.MONOMONO_APP_TOKEN }} # Nutzt den App-Token
+          GH_TOKEN: \${{ secrets.MONOMONO_APP_TOKEN }}
         run: |
           if [ -z "\$FUSION_REPO" ] || [ -z "\$GH_TOKEN" ]; then echo "Fehler: Secrets nicht gesetzt."; exit 1; fi
           gh api --method POST "repos/\$FUSION_REPO/dispatches" -f "event_type=monomono-sync-event"
@@ -112,24 +112,21 @@ EOM
 
 # 5. Workflows aktualisieren
 echo "-> Aktualisiere Haupt-Workflow in '$FUSION_REPO'..."
-SHA_SYNC=$(gh api "repos/$FUSION_REPO/contents/.github/workflows/sync.yml" --jq .sha -t)
+# KORREKTUR: Keine Duplikate und wir verwenden WORKFLOW_SHA
 gh api --method PUT "repos/$FUSION_REPO/contents/.github/workflows/sync.yml" \
    -f message="build: Upgrade monomono sync workflow" \
    -f content="$(echo -n "$SYNC_WORKFLOW_TEMPLATE" | base64)" \
-   -f sha="$SHA_SYNC" >/dev/null
+   -f sha="$WORKFLOW_SHA" >/dev/null
 
-echo "-> Aktualisiere Trigger-Workflows in Sub-Repos..."
 for repo in $(echo "$SUB_REPOS" | sed "s/,/ /g"); do
     echo "   - Verarbeite $repo..."
-    SHA_TRIGGER=$(gh api "repos/$repo/contents/.github/workflows/monomono-trigger.yml" --jq .sha -t 2>/dev/null)
+    SHA_TRIGGER=$(gh api "repos/$repo/contents/.github/workflows/monomono-trigger.yml" --jq .sha 2>/dev/null)
     if [ -n "$SHA_TRIGGER" ]; then
-        # Workflow existiert, aktualisieren
         gh api --method PUT "repos/$repo/contents/.github/workflows/monomono-trigger.yml" \
            -f message="build: Upgrade monomono trigger workflow" \
            -f content="$(echo -n "$TRIGGER_WORKFLOW_TEMPLATE" | base64)" \
            -f sha="$SHA_TRIGGER" >/dev/null
     else
-        # Workflow existiert nicht, erstellen
         gh api --method PUT "repos/$repo/contents/.github/workflows/monomono-trigger.yml" \
            -f message="feat: Add monomono trigger workflow" \
            -f content="$(echo -n "$TRIGGER_WORKFLOW_TEMPLATE" | base64)" >/dev/null
