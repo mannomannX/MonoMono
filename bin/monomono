@@ -1,38 +1,184 @@
 #!/bin/bash
 # ==============================================================================
-# MONOMONO - HAUPTSKRIPT (v10.0 - Konsolidiert & Final)
+# MONOMONO - HAUPTSKRIPT (v12.5 - Finaler Hybrid-Auth-Fix)
 # ==============================================================================
-# Dieses Skript ist komplett in sich geschlossen. Der Inhalt für den
-# Trigger-Workflow ist direkt hier eingebettet.
+# Dieses Skript nutzt eine hybride Authentifizierung, um die Berechtigungsprobleme
+# in automatisierten Umgebungen endgültig zu lösen.
 # ==============================================================================
 
-# --- Konfiguration & Befehlslogik ---
-CONFIG_FILE="$HOME/.monomono_config"
+# --- Konfiguration & globale Variablen ---
+CONFIG_DIR="$HOME/.monomono"
+CONFIG_FILE="$CONFIG_DIR/config.json"
+TEMP_KEY_FILE="$CONFIG_DIR/temp_private_key.pem"
 
-# Verarbeite Befehle wie --help oder --reset und beende das Skript danach
+# --- Befehlslogik (Hilfe & Reset) ---
 case "$1" in
     --help|-h)
-        echo "MonoMono Assistent - Ein Werkzeug zum Erstellen von Fusions-Repos."
-        echo
-        echo "Verwendung:"
-        echo "  monomono           - Startet den interaktiven Assistenten."
-        echo "  monomono --reset   - Löscht den gespeicherten GitHub-Benutzernamen."
-        echo "  monomono --help    - Zeigt diese Hilfe an."
+        # ... (Hilfetext)
         exit 0
         ;;
     --reset)
-        if [ -f "$CONFIG_FILE" ]; then
-            rm "$CONFIG_FILE"
-            echo "✔ Gespeicherter Benutzername wurde zurückgesetzt."
-        else
-            echo "ℹ Es war kein Benutzername zum Zurücksetzen gespeichert."
-        fi
+        if [ -d "$CONFIG_DIR" ]; then rm -rf "$CONFIG_DIR"; echo "✔ Konfiguration zurückgesetzt."; fi
         exit 0
         ;;
 esac
 
-# Lade Sprach- und Hilfsdateien, falls vorhanden
-# (Diese Logik ist für zukünftige Erweiterungen vorbereitet)
+# --- Hilfsfunktionen ---
+ensure_app_configured() {
+    if [ -f "$CONFIG_FILE" ] && jq -e '.app_id' "$CONFIG_FILE" >/dev/null 2>&1; then
+        echo "✔ MonoMono App-Konfiguration gefunden."
+        return 0
+    fi
+
+    # --- APP-SETUP-WIZARD ---
+    echo "--------------------------------------------------------------------"
+    echo "🔑 INFO: EINMALIGES APP-SETUP NÖTIG"
+    echo "--------------------------------------------------------------------"
+    echo "‼️  AKTION ERFORDERLICH: Bitte öffne diese URL in deinem lokalen Browser:"
+    echo "    https://github.com/settings/apps/new"
+    echo
+    echo "--- ANLEITUNG IM BROWSER ---"
+    echo "1. App name:         Gib einen eindeutigen Namen ein (z.B. 'Meine-MonoMono-App')"
+    echo "2. Homepage URL:     https://github.com/mannomannX/MonoMono"
+    echo "3. Webhook:          ENTFERNE den Haken bei 'Active'."
+    echo "4. Permissions:      Setze 'Actions', 'Contents', und 'Administration' auf 'Read & write'."
+    echo "5. Klicke auf 'Create GitHub App'."
+    echo "-------------------------------------------"
+    
+    read -p "? Drücke ENTER, nachdem du die App erstellt hast..."
+    echo
+    echo "--- DATEN SAMMELN ---"
+    read -p "? Bitte gib deine 'App ID' ein (steht oben auf der Seite): " NEW_APP_ID
+    read -p "? Bitte gib den Namen deiner App ein (exakte Schreibweise): " NEW_APP_NAME
+
+    # ==============================================================================
+    # ✨ HIER IST DER FINALE FIX ✨
+    # Wir fragen nicht mehr nach dem Pfad, sondern nach dem Inhalt der .pem-Datei.
+    # ==============================================================================
+    echo
+    echo "Jetzt generiere einen 'Private Key':"
+    echo "1. Klicke auf den Button [Generate a private key]."
+    echo "2. Dein Browser lädt eine .pem-Datei herunter."
+    echo "3. ÖFFNE diese .pem-Datei auf deinem lokalen PC mit einem Texteditor."
+    echo "4. KOPIERE den gesamten Inhalt (inklusive der -----BEGIN/END----- Zeilen)."
+    echo "5. Füge den kopierten Inhalt jetzt hier im Terminal ein."
+    echo "   (Im Terminal: Rechtsklick oder Strg+Shift+V zum Einfügen. Beende die Eingabe mit Strg+D auf einer neuen Zeile)"
+
+    PEM_CONTENT=$(cat)
+
+    if [ -z "$PEM_CONTENT" ]; then
+        echo "❌ Fehler: Es wurde kein Inhalt eingefügt. Bitte versuche es erneut."
+        exit 1
+    fi
+    
+    mkdir -p "$CONFIG_DIR"
+    # Speichere den Inhalt in eine Datei innerhalb des Codespaces
+    echo "$PEM_CONTENT" > "$TEMP_KEY_FILE"
+    chmod 600 "$TEMP_KEY_FILE"
+    # Speichere den Pfad zu dieser neuen Datei in der Konfiguration
+    echo "{\"app_id\":\"$NEW_APP_ID\",\"private_key_path\":\"$TEMP_KEY_FILE\",\"app_name\":\"$NEW_APP_NAME\"}" > "$CONFIG_FILE"
+    
+    echo
+    echo "✅ App-Konfiguration erfolgreich gespeichert!"
+    echo "--------------------------------------------------------------------"
+}
+
+#!/bin/bash
+# ==============================================================================
+# MONOMONO - HAUPTSKRIPT (v12.6 - Final Permissions Fix)
+# ==============================================================================
+# This script uses a private GitHub App and direct API calls for the most
+# critical, environment-sensitive steps, ensuring robust automation.
+# ==============================================================================
+
+# --- Configuration & Global Variables ---
+CONFIG_DIR="$HOME/.monomono"
+CONFIG_FILE="$CONFIG_DIR/config.json"
+
+# --- Command-line Argument Logic ---
+case "$1" in
+    --help|-h)
+        # ... (Help text)
+        exit 0;;
+    --reset)
+        if [ -d "$CONFIG_DIR" ]; then rm -rf "$CONFIG_DIR"; echo "✔ MonoMono configuration reset."; fi
+        exit 0;;
+esac
+
+# --- Helper Functions ---
+ensure_app_configured() {
+    if [ -f "$CONFIG_FILE" ] && jq -e '.app_id' "$CONFIG_FILE" >/dev/null 2>&1; then
+        echo "✔ MonoMono App-Konfiguration gefunden."
+        return 0
+    fi
+
+    # --- APP-SETUP-WIZARD ---
+    echo "--------------------------------------------------------------------"
+    echo "🔑 INFO: EINMALIGES APP-SETUP NÖTIG"
+    echo "--------------------------------------------------------------------"
+    echo "‼️  AKTION ERFORDERLICH: Bitte öffne diese URL in deinem lokalen Browser:"
+    echo "    https://github.com/settings/apps/new"
+    echo
+    echo "--- ANLEITUNG IM BROWSER ---"
+    echo "1. App name:         Gib einen eindeutigen Namen ein (z.B. 'Meine-MonoMono-App')"
+    echo "2. Homepage URL:     https://github.com/mannomannX/MonoMono"
+    echo "3. Webhook:          ENTFERNE den Haken bei 'Active'."
+    echo "4. Permissions -> Repository permissions:"
+    echo "   - Actions:       Read & write"
+    echo "   - Contents:      Read & write"
+    echo "   - Administration:Read & write"
+    echo "   - Secrets:       Read & write   <-- WICHTIG!"
+    echo "5. Klicke ganz unten auf 'Create GitHub App'."
+    echo "-------------------------------------------"
+    
+    read -p "? Drücke ENTER, nachdem du die App erstellt hast..."
+    echo
+    echo "--- DATEN SAMMELN ---"
+    read -p "? Bitte gib deine 'App ID' ein: " NEW_APP_ID
+    read -p "? Bitte gib den Namen deiner App ein (exakte Schreibweise): " NEW_APP_NAME
+    echo "Jetzt generiere einen 'Private Key' und lade ihn herunter."
+    read -p "? Bitte gib den vollständigen Pfad zur .pem-Datei ein: " NEW_PRIVATE_KEY_PATH
+
+    mkdir -p "$CONFIG_DIR"
+    echo "{\"app_id\":\"$NEW_APP_ID\",\"private_key_path\":\"$NEW_PRIVATE_KEY_PATH\",\"app_name\":\"$NEW_APP_NAME\"}" > "$CONFIG_FILE"
+    echo
+    echo "✅ App-Konfiguration erfolgreich gespeichert!"
+    echo "--------------------------------------------------------------------"
+}
+
+get_installation_token() {
+    APP_ID=$(jq -r '.app_id' "$CONFIG_FILE")
+    PRIVATE_KEY_PATH=$(jq -r '.private_key_path' "$CONFIG_FILE")
+    APP_NAME=$(jq -r '.app_name' "$CONFIG_FILE")
+    GITHUB_USER=$(jq -r '.github_user' "$CONFIG_FILE")
+
+    if [ ! -f "$PRIVATE_KEY_PATH" ]; then echo "❌ Fehler: Die .pem-Datei wurde unter '$PRIVATE_KEY_PATH' nicht gefunden."; exit 1; fi
+
+    NOW=$(date +%s); IAT=$(($NOW - 60)); EXP=$(($NOW + 600))
+    HEADER_B64=$(echo -n '{"alg":"RS256","typ":"JWT"}' | base64 | tr -d '\n' | tr -d '=' | tr '/+' '_-')
+    PAYLOAD_B64=$(echo -n "{\"iat\":$IAT,\"exp\":$EXP,\"iss\":\"$APP_ID\"}" | base64 | tr -d '\n' | tr -d '=' | tr '/+' '_-')
+    SIGNATURE_B64=$(openssl dgst -sha256 -sign "$PRIVATE_KEY_PATH" <(echo -n "$HEADER_B64.$PAYLOAD_B64") | base64 | tr -d '\n' | tr -d '=' | tr '/+' '_-')
+    JWT="$HEADER_B64.$PAYLOAD_B64.$SIGNATURE_B64"
+
+    INSTALLATION_ID=$(curl -s -H "Authorization: Bearer $JWT" -H "Accept: application/vnd.github.v3+json" https://api.github.com/app/installations | jq ".[] | select(.account.login==\"$GITHUB_USER\") | .id")
+
+    while [ -z "$INSTALLATION_ID" ]; do
+        echo "--------------------------------------------------------------------"
+        echo "⚠️  AKTION ERFORDERLICH: Die App '$APP_NAME' ist noch nicht installiert."
+        echo "   Bitte öffne: https://github.com/settings/apps/$APP_NAME/installations"
+        echo "   Wähle 'All repositories' und klicke 'Install'."
+        read -p "? Drücke ENTER, nachdem du die Installation abgeschlossen hast..."
+        sleep 3
+        INSTALLATION_ID=$(curl -s -H "Authorization: Bearer $JWT" -H "Accept: application/vnd.github.v3+json" https://api.github.com/app/installations | jq ".[] | select(.account.login==\"$GITHUB_USER\") | .id")
+    done
+    
+    INSTALLATION_TOKEN=$(curl -s -X POST -H "Authorization: Bearer $JWT" -H "Accept: application/vnd.github.v3+json" "https://api.github.com/app/installations/$INSTALLATION_ID/access_tokens" | jq -r '.token')
+    
+    if [ -z "$INSTALLATION_TOKEN" ] || [ "$INSTALLATION_TOKEN" == "null" ]; then echo "❌ Fehler beim Erstellen des Installation-Tokens."; exit 1; fi
+
+    export GH_TOKEN=$INSTALLATION_TOKEN
+    echo "✔ Erfolgreich als MonoMono-App authentifiziert."
+}
 
 # --- HAUPTLOGIK ---
 
@@ -81,43 +227,28 @@ fi
 
 # --- ARBEITS-MODUS ---
 echo "✔ System ready. All tools found."
+ensure_app_configured
 
-# 2. GITHUB-LOGIN & RECHTE-PRÜFUNG
-NEEDS_REAUTH=false
-if ! gh auth status &>/dev/null; then
-    NEEDS_REAUTH=true
+if [ -f "$CONFIG_FILE" ] && jq -e '.github_user' "$CONFIG_FILE" >/dev/null 2>&1; then
+    GITHUB_USER=$(jq -r '.github_user' "$CONFIG_FILE")
 else
-    TOKEN_STATUS=$(gh auth status -t 2>&1)
-    if ! echo "$TOKEN_STATUS" | grep -q "repo" || ! echo "$TOKEN_STATUS" | grep -q "workflow"; then
-        NEEDS_REAUTH=true
-        echo "⚠️  WARNUNG: Deinem aktuellen GitHub-Login fehlen die benötigten Rechte (repo, workflow)."
-    fi
-fi
-if $NEEDS_REAUTH; then
-    echo "--------------------------------------------------------------------"
-    echo "ℹ️  Ein Login mit erweiterten Rechten ('repo', 'workflow') ist nötig."
-    read -p "? Drücke ENTER, um den Anmelde-Prozess zu starten..."
-    unset GITHUB_TOKEN
-    gh auth login --scopes repo,workflow
-fi
-if ! gh auth status &>/dev/null; then echo "❌ Login fehlgeschlagen."; exit 1; fi
-echo "✔ Erfolgreich bei GitHub angemeldet."
-
-# 3. BENUTZERNAME LADEN/SPEICHERN
-if [ -f "$CONFIG_FILE" ]; then
-    source "$CONFIG_FILE"
-else
-    read -p "? Please enter your GitHub username: " GITHUB_USER
-    echo "GITHUB_USER=\"$GITHUB_USER\"" > "$CONFIG_FILE"
+    read -p "? Bitte gib deinen GitHub-Benutzernamen ein: " GITHUB_USER
+    TMP_JSON=$(jq --arg user "$GITHUB_USER" '. + {github_user: $user}' "$CONFIG_FILE")
+    echo "$TMP_JSON" > "$CONFIG_FILE"
 fi
 echo "ℹ Angemeldet als Benutzer: $GITHUB_USER"
 
 # 4. AUTHENTIFIZIERUNG MIT PERSONAL ACCESS TOKEN (PAT)
 echo "--------------------------------------------------------------------"
 echo "🔑 INFO: Ein persönlicher Zugriffstoken (PAT) wird benötigt."
-read -s -p "👉 Bitte füge den kopierten Token hier ein und drücke ENTER: " PAT; echo
-
-# Token-Validierung mit cURL...
+echo "‼️  AKTION ERFORDERLICH: Öffne https://github.com/settings/tokens/new"
+echo "   Anleitung: Wähle die Scopes 'repo' UND 'workflow' aus, generiere den Token und kopiere ihn."
+echo "--------------------------------------------------------------------"
+PAT=""
+while [ -z "$PAT" ]; do
+    read -s -p "👉 Bitte füge den kopierten Token hier ein und drücke ENTER: " PAT; echo
+done
+echo "-> Überprüfe den Access Token..."
 HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: token $PAT" https://api.github.com/user)
 if [ "$HTTP_STATUS" -ne 200 ]; then
     echo "❌ FEHLER: Der Token ist ungültig (HTTP-Status: $HTTP_STATUS)." >&2; exit 1
@@ -125,19 +256,13 @@ fi
 VALIDATED_USER=$(curl -s -H "Authorization: token $PAT" https://api.github.com/user | jq -r '.login')
 echo "✔ Access Token ist gültig für Benutzer '$VALIDATED_USER'."
 
-# ==============================================================================
-# ✨ HIER IST DER FIX ✨
-# Wir speichern den PAT jetzt in die Konfigurationsdatei.
-# ==============================================================================
-echo "MONOMONO_PAT='$PAT'" >> "$CONFIG_FILE"
-export GH_TOKEN=$PAT
-
-# 5. PROJEKT-SETUP
+# 4. PROJEKT-SETUP
 echo "-------------------------------------------"
 echo "🚀 Starte den Assistenten..."
 echo "1/5: Lade Repositories via API..."
 REPOS_LIST=$(curl -s -H "Authorization: token $PAT" "https://api.github.com/user/repos?type=owner&per_page=100" | jq -r '.[].full_name')
 if [ -z "$REPOS_LIST" ]; then echo "❌ Keine Repositories gefunden."; exit 1; fi
+echo "✔ Alle $(echo -e "$REPOS_LIST" | wc -l) Repositories erfolgreich geladen."
 
 echo -e "2/5: Wähle die zu fusionierenden Repos:\n(Navigation: Pfeiltasten, Auswahl: TAB, Bestätigen: ENTER)"
 SELECTED_REPOS=$(echo "$REPOS_LIST" | fzf --multi --height 40% --border --prompt="Select> ")
@@ -161,7 +286,7 @@ if [[ "$IS_PRIVATE" =~ ^[YyJj]$ ]]; then
     VISIBILITY_FLAG="--private"
 fi
 
-# 6. UPDATE-OPTIONEN
+# 5. UPDATE-OPTIONEN
 echo "-------------------------------------------"
 echo "⚙️ 5/5: Konfiguriere die Update-Methoden..."
 CRON_SCHEDULE=""
@@ -177,11 +302,20 @@ if [[ "$ACTIVATE_WEBHOOKS" =~ ^[YyJj]$ ]]; then
     SETUP_WEBHOOKS=true
 fi
 
-# 7. REPO ERSTELLEN & WORKFLOW PUSHEN
-echo "-> Erstelle Repo '$FUSION_REPO_NAME' und richte den Workflow ein..."
-gh repo create "$GITHUB_USER/$FUSION_REPO_NAME" "$VISIBILITY_FLAG" --description "Automatic fusion repo by MonoMono" >/dev/null || { echo "❌ Error creating repo."; exit 1; }
-echo -n "$PAT" | gh secret set ACCESS_TOKEN --repo "$GITHUB_USER/$FUSION_REPO_NAME" || { echo "❌ Fehler beim Setzen des Secrets."; exit 1; }
-echo "✔ Secret erfolgreich im Repository gespeichert."
+# 6. REPO ERSTELLEN & SECRET SETZEN
+echo "-> Creating repo '$FUSION_REPO_NAME'..."
+# Wir authentifizieren diesen einen Befehl explizit mit dem PAT
+GH_TOKEN=$PAT gh repo create "$GITHUB_USER/$FUSION_REPO_NAME" "$VISIBILITY_FLAG" --description "Automatic fusion repo by MonoMono" >/dev/null || { echo "❌ Error creating the GitHub repo."; exit 1; }
+echo "✔ Repository erfolgreich erstellt."
+
+# JETZT wechseln wir zum sicheren App-Token für den Rest des Prozesses
+echo "-> Wechsle zur App-Authentifizierung für weitere Aktionen..."
+get_installation_token # Holt den App-Token und exportiert ihn als GH_TOKEN
+
+echo "-> Speichere den App-Token sicher als 'ACCESS_TOKEN' Secret im neuen Repo..."
+# gh secret set verwendet jetzt den App-Token (GH_TOKEN)
+echo -n "$GH_TOKEN" | gh secret set ACCESS_TOKEN --repo "$GITHUB_USER/$FUSION_REPO_NAME" || { echo "❌ Fehler beim Setzen des Secrets."; exit 1; }
+echo "✔ Secret erfolgreich im Repository '$FUSION_REPO_NAME' gespeichert."
 
 WORKFLOW_NAME="Fusion-Repo Erstellen & Aktualisieren"
 ON_TRIGGERS="on:\n  workflow_dispatch:"
@@ -260,7 +394,7 @@ cd - >/dev/null
 rm -rf "$TEMP_DIR"
 echo "✔ Workflow file successfully pushed to GitHub."
 
-# 8. ECHTZEIT-SYNC EINRICHTEN (TRIGGER-WORKFLOWS)
+# 7. ECHTZEIT-SYNC EINRICHTEN (TRIGGER-WORKFLOWS)
 if [[ "$SETUP_WEBHOOKS" = true ]]; then
     echo "-> Richte Echtzeit-Synchronisierung für die Sub-Repos ein..."
 
@@ -321,7 +455,7 @@ EOM
     done
 fi
 
-# 9. WORKFLOW STARTEN
+# 8. WORKFLOW STARTEN
 echo "-> Warte, bis der Workflow auf GitHub sichtbar ist..."
 WORKFLOW_FOUND=false
 for i in {1..5}; do
