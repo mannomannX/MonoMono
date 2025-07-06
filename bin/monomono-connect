@@ -6,6 +6,28 @@
 # Update-Workflow installiert und die nötigen Verbindungen (Secrets)
 # für die Synchronisierung einrichtet.
 # ==============================================================================
+
+auth_check() {
+    # Prüft, ob der Benutzer bereits bei der GitHub CLI angemeldet ist.
+    if ! gh auth status >/dev/null 2>&1; then
+        echo "⚠️  Du scheinst nicht bei der GitHub CLI angemeldet zu sein."
+        echo "   Für diesen Befehl ist eine Authentifizierung erforderlich."
+        # Bietet an, den Anmeldeprozess direkt zu starten.
+        read -p "? Soll 'gh auth login' jetzt ausgeführt werden, um dich anzumelden? (j/n) " choice
+        if [[ "$choice" =~ ^[YyJj]$ ]]; then
+            # Führt den interaktiven Login-Prozess der GitHub CLI aus.
+            gh auth login
+        else
+            echo "❌ Abbruch: Authentifizierung ist für diesen Befehl erforderlich." >&2
+            exit 1
+        fi
+    fi
+    # Nach erfolgreicher Prüfung wird der Benutzername zur Bestätigung angezeigt.
+    GITHUB_USER=$(gh api user --jq .login)
+    echo "✔ Authentifiziert als '$GITHUB_USER'."
+}
+
+
 CONFIG_FILE="$HOME/.monomono_config"
 
 # Funktion zur PAT-Abfrage, falls nicht in der Config gefunden
