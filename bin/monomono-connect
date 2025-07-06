@@ -47,13 +47,21 @@ if [ "$HTTP_STATUS" -ne 200 ]; then
 fi
 echo "✔ Access Token ist gültig."
 
-# 3. Bestehende Konfiguration auslesen
+# 3. Bestehende Konfiguration auslesen (mit robuster Fehlerprüfung)
 echo "-> Lese die aktuelle Konfiguration aus '$FUSION_REPO'..."
-WORKFLOW_RESPONSE=$(gh api "repos/$FUSION_REPO/contents/.github/workflows/sync.yml" 2>/dev/null)
-if [ -z "$WORKFLOW_RESPONSE" ]; then
-    echo "❌ Fehler: Konnte 'sync.yml' im Repo '$FUSION_REPO' nicht finden. Ist der Repo-Name korrekt?" >&2
+# Wir authentifizieren den Lese-Befehl jetzt auch explizit
+WORKFLOW_RESPONSE=$(GH_TOKEN=$PAT gh api "repos/$FUSION_REPO/contents/.github/workflows/sync.yml" 2>&1)
+API_EXIT_CODE=$?
+
+# Neue, wasserdichte Prüfung
+if [ $API_EXIT_CODE -ne 0 ] || ! echo "$WORKFLOW_RESPONSE" | jq -e '.sha' >/dev/null; then
+    echo "❌ Fehler: Konnte 'sync.yml' im Repo '$FUSION_REPO' nicht lesen." >&2
+    echo "   Stelle sicher, dass der Repo-Name korrekt ist und dein PAT die 'repo'-Rechte hat." >&2
+    echo "   API-Antwort: $WORKFLOW_RESPONSE" >&2
     exit 1
 fi
+
+# Ab hier wissen wir, dass der Response gültig ist
 WORKFLOW_CONTENT=$(echo "$WORKFLOW_RESPONSE" | jq -r .content | base64 --decode)
 WORKFLOW_SHA=$(echo "$WORKFLOW_RESPONSE" | jq -r .sha)
 
