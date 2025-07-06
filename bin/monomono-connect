@@ -60,13 +60,20 @@ WORKFLOW_SHA=$(echo "$WORKFLOW_RESPONSE" | jq -r .sha)
 # 4. Sub-Repo-Liste extrahieren und erweitern
 SUB_REPOS_OLD=$(echo "$WORKFLOW_CONTENT" | grep -oP "for repo in \\\$\(echo '([^']*)'" | head -n1 | sed -E "s/for repo in \\\$\(echo '([^']*)'/\1/")
 
-# Fehlerfest: Prüfen, ob das Repo bereits verbunden ist
+# FEHLER-FIX: Prüfen, ob das Repo bereits verbunden ist
 if [[ ",$SUB_REPOS_OLD," == *",$NEW_SUB_REPO,"* ]]; then
     echo "⚠️  Warnung: Das Repository '$NEW_SUB_REPO' ist bereits mit diesem Fusions-Repo verbunden."
     exit 0
 fi
 
-SUB_REPOS_NEW="$SUB_REPOS_OLD,$NEW_SUB_REPO"
+# FEHLER-FIX: Korrekte Verknüpfung der Liste
+if [ -z "$SUB_REPOS_OLD" ]; then
+    # Wenn die alte Liste leer ist, ist die neue Liste nur das neue Repo
+    SUB_REPOS_NEW="$NEW_SUB_REPO"
+else
+    # Nur wenn die alte Liste nicht leer ist, fügen wir ein Komma hinzu
+    SUB_REPOS_NEW="$SUB_REPOS_OLD,$NEW_SUB_REPO"
+fi
 echo "✔ Neue Repo-Liste: $SUB_REPOS_NEW"
 
 # 5. Neue Workflow-Vorlage erstellen
