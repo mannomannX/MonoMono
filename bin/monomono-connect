@@ -1,23 +1,17 @@
 #!/bin/bash
 # ==============================================================================
-# MONOMONO-CONNECT v1.0 (Standalone & Fehlerfest)
+# MONOMONO-CONNECT v1.1 (Standalone & Autark)
 # ==============================================================================
 # Verbindet ein neues Sub-Repo mit einem bestehenden Fusions-Repo.
-# Funktioniert eigenständig und führt den Benutzer sicher durch den Prozess.
+# Generiert benötigte Tokens eigenständig für eine nahtlose Erfahrung.
 # ==============================================================================
 
 # --- Hilfsfunktionen ---
 auth_check() {
     if ! gh auth status >/dev/null 2>&1; then
         echo "⚠️  Du scheinst nicht bei der GitHub CLI angemeldet zu sein."
-        echo "   Für diesen Befehl ist eine Authentifizierung erforderlich."
-        read -p "? Soll 'gh auth login' jetzt ausgeführt werden, um dich anzumelden? (j/n) " choice
-        if [[ "$choice" =~ ^[YyJj]$ ]]; then
-            gh auth login
-        else
-            echo "❌ Abbruch: Authentifizierung ist für diesen Befehl erforderlich." >&2
-            exit 1
-        fi
+        read -p "? Soll 'gh auth login' jetzt ausgeführt werden? (j/n) " choice
+        if [[ "$choice" =~ ^[YyJj]$ ]]; then gh auth login; else echo "❌ Abbruch."; exit 1; fi
     fi
     GITHUB_USER=$(gh api user --jq .login)
     echo "✔ Authentifiziert als '$GITHUB_USER'."
@@ -158,15 +152,39 @@ if [ ! -f "$CONFIG_FILE" ]; then
     exit 1
 fi
 
-echo "‼️  AKTION ERFORDERLICH: Um einen sicheren App-Token zu setzen,"
-echo "   gehe zu den 'Secrets and variables' deines Fusions-Repos ($FUSION_REPO),"
-echo "   finde das 'ACCESS_TOKEN'-Secret und kopiere dessen Wert."
-read -s -p "👉 Bitte füge den Wert des ACCESS_TOKEN-Secrets hier ein: " APP_TOKEN; echo
+# Holt einen kurzlebigen Installation-Token für die App
+get_installation_token() {
+    APP_ID=$(jq -r '.app_id' "$CONFIG_FILE")
+    PRIVATE_KEY_PATH=$(jq -r '.private_key_path' "$CONFIG_FILE")
+    APP_NAME=$(jq -r '.app_name' "$CONFIG_FILE")
+    GITHUB_USER=$(jq -r '.github_user' "$CONFIG_FILE")
 
-if [ -z "$APP_TOKEN" ]; then echo "❌ Fehler: Kein App-Token eingefügt."; exit 1; fi
+    if [ ! -f "$PRIVATE_KEY_PATH" ]; then echo "❌ Fehler: Die .pem-Datei wurde unter '$PRIVATE_KEY_PATH' nicht gefunden."; exit 1; fi
 
-GH_TOKEN=$PAT gh secret set MONOMONO_FUSION_REPO --repo "$NEW_SUB_REPO" --body "$FUSION_REPO"
-GH_TOKEN=$PAT gh secret set MONOMONO_APP_TOKEN --repo "$NEW_SUB_REPO" --body "$APP_TOKEN"
+    NOW=$(date +%s); IAT=$(($NOW - 60)); EXP=$(($NOW + 600))
+    HEADER_B64=$(echo -n '{"alg":"RS256","typ":"JWT"}' | base64 | tr -d '\n' | tr -d '=' | tr '/+' '_-')
+    PAYLOAD_B64=$(echo -n "{\"iat\":$IAT,\"exp\":$EXP,\"iss\":\"$APP_ID\"}" | base64 | tr -d '\n' | tr -d '=' | tr '/+' '_-')
+    SIGNATURE_B64=$(openssl dgst -sha256 -sign "$PRIVATE_KEY_PATH" <(echo -n "$HEADER_B64.$PAYLOAD_B64") | base64 | tr -d '\n' | tr -d '=' | tr '/+' '_-')
+    JWT="$HEADER_B64.$PAYLOAD_B64.$SIGNATURE_B64"
+
+    INSTALLATION_ID=$(curl -s -H "Authorization: Bearer $JWT" -H "Accept: application/vnd.github.v3+json" https://api.github.com/app/installations | jq ".[] | select(.account.login==\"$GITHUB_USER\") | .id")
+
+    while [ -z "$INSTALLATION_ID" ]; do
+        echo "--------------------------------------------------------------------"
+        echo "⚠️  AKTION ERFORDERLICH: Die App '$APP_NAME' ist noch nicht installiert."
+        echo "   Bitte öffne: https://github.com/settings/apps/$APP_NAME/installations"
+        echo "   Wähle 'All repositories' und klicke 'Install'."
+        read -p "? Drücke ENTER, nachdem du die Installation abgeschlossen hast..."
+        sleep 3
+        INSTALLATION_ID=$(curl -s -H "Authorization: Bearer $JWT" -H "Accept: application/vnd.github.v3+json" https://api.github.com/app/installations | jq ".[] | select(.account.login==\"$GITHUB_USER\") | .id")
+    done
+
+    INSTALLATION_TOKEN=$(curl -s -X POST -H "Authorization: Bearer $JWT" -H "Accept: application/vnd.github.v3+json" "https://api.github.com/app/installations/$INSTALLATION_ID/access_tokens" | jq -r '.token')
+    if [ -z "$INSTALLATION_TOKEN" ] || [ "$INSTALLATION_TOKEN" == "null" ]; then echo "❌ Fehler beim Erstellen des Installation-Tokens."; exit 1; fi
+
+    export GH_TOKEN=$INSTALLATION_TOKEN
+    echo "✔ Erfolgreich als MonoMono-App authentifiziert."
+}
 
 # Trigger-Workflow installieren
 echo "   - Installiere Trigger-Workflow..."
