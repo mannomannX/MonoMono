@@ -235,6 +235,7 @@ echo "-> Speichere App-Token als Secret im neuen Repo..."
 echo -n "$GH_TOKEN" | gh secret set ACCESS_TOKEN --repo "$GITHUB_USER/$FUSION_REPO_NAME" || { echo "❌ Fehler beim Setzen des Secrets."; exit 1; }
 
 # Vorlage für den Haupt-Workflow (Version 3.0 - mit Aufräum-Logik)
+# Vorlage für den Haupt-Workflow (Version 3.1 - Final & Sicher)
 read -r -d '' SYNC_WORKFLOW_TEMPLATE << EOM
 name: 'Fusion-Repo Sync'
 on:
@@ -255,27 +256,36 @@ jobs:
       - name: Sync and Rebuild
         run: |
           # == CONFIGURATION ==
-          REPOS_TO_SYNC='${SUB_REPOS_NEW}' # Platzhalter wird vom Skript ersetzt
+          # Der Platzhalter wird vom Skript mit der korrekten Liste ersetzt
+          REPOS_TO_SYNC='${SUB_REPOS}' 
 
-          # == STEP 1: CLEANUP GHOST DIRECTORIES (DER NEUE, ENTSCHEIDENDE SCHRITT) ==
-          echo "-> Searching for obsolete directories to remove..."
-          ALL_DIRS=\$(find . -maxdepth 1 -mindepth 1 -type d ! -name '.git' -exec basename {} \;)
+          # == STEP 1: CLEANUP GHOST DIRECTORIES (mit Schutz für .github) ==
+          echo "-> Pruning obsolete directories..."
+          # FIX: Dieser Befehl ignoriert jetzt explizit den .github-Ordner
+          ALL_DIRS=\$(find . -maxdepth 1 -mindepth 1 -type d ! -name '.git' ! -name '.github' -exec basename {} \;)
           for dir in \$ALL_DIRS; do
               # Prüfe, ob das Verzeichnis in der aktuellen Sync-Liste ist
-              if ! echo "\$REPOS_TO_SYNC" | grep -q "\$dir"; then
-                  echo "   - Deleting obsolete directory: \$dir"
-                  rm -rf "\$dir"
+              is_in_sync_list=false
+              for repo_in_list in \$(echo "\$REPOS_TO_SYNC" | sed "s/,/ /g"); do
+                if [ "\$(basename "\$repo_in_list")" == "\$dir" ]; then
+                  is_in_sync_list=true
+                  break
+                fi
+              done
+              if [ "\$is_in_sync_list" == "false" ]; then
+                echo "   - Deleting obsolete directory: \$dir"
+                rm -rf "\$dir"
               fi
           done
 
           # == STEP 2: CLONE SUB-REPOS ==
+          echo "-> Cloning sub-repos..."
           git config --global url."https://x-access-token:\${{ secrets.ACCESS_TOKEN }}@github.com/".insteadOf "https://github.com/"
           for repo in \$(echo "\$REPOS_TO_SYNC" | sed 's/,/ /g'); do
             folder_name=\$(basename \$repo)
-            echo "-> Cloning \$repo into \$folder_name..."
-            # Es ist sicherer, erst zu löschen, dann zu klonen, falls sich was geändert hat
+            # Es ist sicherer, erst zu löschen, dann zu klonen
             rm -rf "\$folder_name"
-            git clone --depth 1 https://github.com/\$repo.git "\$folder_name" && rm -rf "\$folder_name/.git"
+            git clone --depth 1 https://github.com/\$repo.git "\$folder_name" --quiet && rm -rf "\$folder_name/.git"
           done
 
           # == STEP 3: CREATE INTELLIGENT README ==
@@ -306,6 +316,7 @@ jobs:
             echo "No new changes found."
           fi
 EOM
+
 TEMP_DIR=$(mktemp -d)
 git clone "https://x-access-token:$PAT@github.com/$GITHUB_USER/$FUSION_REPO_NAME.git" "$TEMP_DIR" >/dev/null 2>&1
 mkdir -p "$TEMP_DIR/.github/workflows"
