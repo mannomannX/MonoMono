@@ -1,9 +1,9 @@
 #!/bin/bash
 # ==============================================================================
-# MONOMONO-UPGRADE v1.6 (Final & Bilingual)
+# MONOMONO-UPGRADE v1.7 (Final & mit manuellem Fallback)
 # ==============================================================================
-# Aktualisiert ein Fusions-Repo. Erkennt automatisch alte und neue
-# Workflow-Versionen und kann im "Repair-Modus" ein kaputtes Setup wiederherstellen.
+# Aktualisiert ein Fusions-Repo. Erkennt alte/neue Formate und bietet als
+# letzte Instanz eine manuelle Eingabe, um maximale Robustheit zu gewährleisten.
 # ==============================================================================
 
 auth_check() {
@@ -58,21 +58,27 @@ if echo "$WORKFLOW_RESPONSE" | jq -e '.sha' > /dev/null; then
     IS_UPDATE=true; WORKFLOW_SHA=$(echo "$WORKFLOW_RESPONSE" | jq -r .sha);
     WORKFLOW_CONTENT=$(echo "$WORKFLOW_RESPONSE" | jq -r .content | base64 --decode);
     
-    # NEUE, BILINGUALE EXTRAKTION
+    # Versuche neue Extraktion
     SUB_REPOS=$(echo "$WORKFLOW_CONTENT" | grep -oP "REPOS_TO_SYNC='([^']*)'" | sed -E "s/REPOS_TO_SYNC='([^']*)'/\1/")
     if [ -z "$SUB_REPOS" ]; then
-        echo "   (Altes Workflow-Format erkannt, extrahiere anders...)"
+        # Fallback: Versuche alte Extraktion
         SUB_REPOS=$(echo "$WORKFLOW_CONTENT" | grep -oP "for repo in \\\$\(echo '([^']*)'" | head -n1 | sed -E "s/for repo in \\\$\(echo '([^']*)'/\1/")
     fi
 else
     echo "⚠️  Warnung: 'sync.yml' nicht gefunden. Wechsle in den Repair-Modus.";
-    read -p "? Gib die Sub-Repos an, die verbunden sein sollen (user/repo1,...): " SUB_REPOS;
+fi
+
+# FINALER FALLBACK: Manuelle Eingabe
+if [ -z "$SUB_REPOS" ]; then
+    echo "⚠️  Konnte Sub-Repos nicht automatisch erkennen."
+    read -p "? Bitte gib die zu verbindenden Sub-Repos manuell ein (user/repo1,...): " SUB_REPOS
 fi
 
 if [ -z "$SUB_REPOS" ]; then echo "❌ Abbruch: Keine Sub-Repos gefunden oder angegeben."; exit 1; fi
 echo "✔ Konfiguriere für: $SUB_REPOS";
 
 read -r -d '' SYNC_WORKFLOW_TEMPLATE << EOM
+# ... (Hier die komplette, lange Vorlage für SYNC_WORKFLOW_TEMPLATE einfügen)
 name: 'Fusion-Repo Sync'
 on:
   workflow_dispatch:
@@ -107,11 +113,30 @@ jobs:
             fi
           done
           echo "-> Cloning sub-repos..."
-          for repo in \$(echo "\$REPOS_TO_SYNC" | sed "s/,/ /g"); do
+          for repo in \$(echo "\$REPOS_TO_SYNC" | sed 's/,/ /g'); do
             folder_name=\$(basename \$repo)
             rm -rf "\$folder_name"
             git clone --depth 1 "https://x-access-token:\${{ secrets.ACCESS_TOKEN }}@github.com/\$repo.git" "\$folder_name" --quiet && rm -rf "\$folder_name/.git"
           done
+EOM
+
+read -r -d '' TRIGGER_WORKFLOW_TEMPLATE << EOM
+# ... (Hier die Vorlage für TRIGGER_WORKFLOW_TEMPLATE einfügen)
+name: MonoMono Sync Trigger
+on:
+  push:
+    branches: [main, master]
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send dispatch to fusion repo
+        env:
+          FUSION_REPO: \${{ secrets.MONOMONO_FUSION_REPO }}
+          GH_TOKEN: \${{ secrets.MONOMONO_APP_TOKEN }}
+        run: |
+          if [ -z "\$FUSION_REPO" ] || [ -z "\$GH_TOKEN" ]; then echo "Fehler: Secrets nicht gesetzt."; exit 1; fi
+          gh api --method POST "repos/\$FUSION_REPO/dispatches" -f "event_type=monomono-sync-event"
 EOM
 
 if [ "$IS_UPDATE" = true ]; then
