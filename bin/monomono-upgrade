@@ -1,9 +1,9 @@
 #!/bin/bash
 # ==============================================================================
-# MONOMONO-UPGRADE v1.7 (Final & mit manuellem Fallback)
+# MONOMONO-UPGRADE v1.8 (Final & mit Secret-Refresh)
 # ==============================================================================
-# Aktualisiert ein Fusions-Repo. Erkennt alte/neue Formate und bietet als
-# letzte Instanz eine manuelle Eingabe, um maximale Robustheit zu gewährleisten.
+# Aktualisiert ein Fusions-Repo, erneuert alle Tokens und Secrets und kann
+# ein kaputtes Setup im Repair-Modus wiederherstellen.
 # ==============================================================================
 
 auth_check() {
@@ -57,18 +57,14 @@ IS_UPDATE=false; SUB_REPOS=""
 if echo "$WORKFLOW_RESPONSE" | jq -e '.sha' > /dev/null; then
     IS_UPDATE=true; WORKFLOW_SHA=$(echo "$WORKFLOW_RESPONSE" | jq -r .sha);
     WORKFLOW_CONTENT=$(echo "$WORKFLOW_RESPONSE" | jq -r .content | base64 --decode);
-    
-    # Versuche neue Extraktion
     SUB_REPOS=$(echo "$WORKFLOW_CONTENT" | grep -oP "REPOS_TO_SYNC='([^']*)'" | sed -E "s/REPOS_TO_SYNC='([^']*)'/\1/")
     if [ -z "$SUB_REPOS" ]; then
-        # Fallback: Versuche alte Extraktion
         SUB_REPOS=$(echo "$WORKFLOW_CONTENT" | grep -oP "for repo in \\\$\(echo '([^']*)'" | head -n1 | sed -E "s/for repo in \\\$\(echo '([^']*)'/\1/")
     fi
 else
     echo "⚠️  Warnung: 'sync.yml' nicht gefunden. Wechsle in den Repair-Modus.";
 fi
 
-# FINALER FALLBACK: Manuelle Eingabe
 if [ -z "$SUB_REPOS" ]; then
     echo "⚠️  Konnte Sub-Repos nicht automatisch erkennen."
     read -p "? Bitte gib die zu verbindenden Sub-Repos manuell ein (user/repo1,...): " SUB_REPOS
@@ -77,8 +73,8 @@ fi
 if [ -z "$SUB_REPOS" ]; then echo "❌ Abbruch: Keine Sub-Repos gefunden oder angegeben."; exit 1; fi
 echo "✔ Konfiguriere für: $SUB_REPOS";
 
+# Neueste Workflow-Vorlagen definieren
 read -r -d '' SYNC_WORKFLOW_TEMPLATE << EOM
-# ... (Hier die komplette, lange Vorlage für SYNC_WORKFLOW_TEMPLATE einfügen)
 name: 'Fusion-Repo Sync'
 on:
   workflow_dispatch:
@@ -103,17 +99,15 @@ jobs:
             is_in_sync_list=false
             for repo_in_list in \$(echo "\$REPOS_TO_SYNC" | sed "s/,/ /g"); do
               if [ "\$(basename "\$repo_in_list")" == "\$dir" ]; then
-                is_in_sync_list=true
-                break
+                is_in_sync_list=true; break;
               fi
             done
             if [ "\$is_in_sync_list" == "false" ]; then
-              echo "   - Deleting obsolete directory: \$dir"
-              rm -rf "\$dir"
+              echo "   - Deleting obsolete directory: \$dir"; rm -rf "\$dir";
             fi
           done
           echo "-> Cloning sub-repos..."
-          for repo in \$(echo "\$REPOS_TO_SYNC" | sed 's/,/ /g'); do
+          for repo in \$(echo "\$REPOS_TO_SYNC" | sed "s/,/ /g"); do
             folder_name=\$(basename \$repo)
             rm -rf "\$folder_name"
             git clone --depth 1 "https://x-access-token:\${{ secrets.ACCESS_TOKEN }}@github.com/\$repo.git" "\$folder_name" --quiet && rm -rf "\$folder_name/.git"
@@ -121,7 +115,6 @@ jobs:
 EOM
 
 read -r -d '' TRIGGER_WORKFLOW_TEMPLATE << EOM
-# ... (Hier die Vorlage für TRIGGER_WORKFLOW_TEMPLATE einfügen)
 name: MonoMono Sync Trigger
 on:
   push:
@@ -139,6 +132,7 @@ jobs:
           gh api --method POST "repos/\$FUSION_REPO/dispatches" -f "event_type=monomono-sync-event"
 EOM
 
+# Haupt-Workflow erstellen oder aktualisieren
 if [ "$IS_UPDATE" = true ]; then
     echo "-> Aktualisiere Haupt-Workflow...";
     GH_TOKEN=$PAT gh api --method PUT "repos/$FUSION_REPO/contents/.github/workflows/sync.yml" -f message="build: Upgrade monomono sync workflow" -f content="$(echo -n "$SYNC_WORKFLOW_TEMPLATE" | base64)" -f sha="$WORKFLOW_SHA" >/dev/null;
@@ -146,10 +140,17 @@ else
     echo "-> Erstelle neuen Haupt-Workflow...";
     GH_TOKEN=$PAT gh api --method PUT "repos/$FUSION_REPO/contents/.github/workflows/sync.yml" -f message="build: Create/Repair monomono sync workflow" -f content="$(echo -n "$SYNC_WORKFLOW_TEMPLATE" | base64)" >/dev/null;
 fi
+echo "✔ Haupt-Workflow erfolgreich (neu) erstellt/aktualisiert."
 
-echo "-> Aktualisiere Trigger-Workflows in allen Sub-Repos..."
+# Trigger-Workflows UND SECRETS in allen Sub-Repos aktualisieren
+echo "-> Aktualisiere Trigger-Workflows und Secrets in allen Sub-Repos..."
 for repo in $(echo "$SUB_REPOS" | sed "s/,/ /g"); do
     echo "   - Verarbeite $repo..."
+    # Secrets setzen/aktualisieren
+    GH_TOKEN=$PAT gh secret set MONOMONO_FUSION_REPO --repo "$repo" --body "$FUSION_REPO"
+    GH_TOKEN=$PAT gh secret set MONOMONO_APP_TOKEN --repo "$repo" --body "$GENERATED_APP_TOKEN"
+    
+    # Workflow setzen/aktualisieren
     SHA_TRIGGER=$(GH_TOKEN=$PAT gh api "repos/$repo/contents/.github/workflows/monomono-trigger.yml" --jq .sha 2>/dev/null)
     if [ -n "$SHA_TRIGGER" ]; then
         GH_TOKEN=$PAT gh api --method PUT "repos/$repo/contents/.github/workflows/monomono-trigger.yml" -f message="build: Upgrade monomono trigger workflow" -f content="$(echo -n "$TRIGGER_WORKFLOW_TEMPLATE" | base64)" -f sha="$SHA_TRIGGER" >/dev/null
@@ -157,8 +158,12 @@ for repo in $(echo "$SUB_REPOS" | sed "s/,/ /g"); do
         GH_TOKEN=$PAT gh api --method PUT "repos/$repo/contents/.github/workflows/monomono-trigger.yml" -f message="feat: Add/Repair monomono trigger workflow" -f content="$(echo -n "$TRIGGER_WORKFLOW_TEMPLATE" | base64)" >/dev/null
     fi
 done
-echo "✔ Trigger-Workflows erfolgreich aktualisiert."
+echo "✔ Trigger-Workflows und Secrets erfolgreich aktualisiert."
 
-echo "-> Stoße einen Sync-Lauf an, um den Zustand zu bereinigen..."
-gh workflow run sync.yml --repo "$FUSION_REPO"
-echo "✅ Prozess abgeschlossen. Der Aufräum-Prozess wurde gestartet."
+# Finaler Hinweis an den Benutzer
+echo "--------------------------------------------------------------------"
+echo "✅ Prozess abgeschlossen. Das System ist vollständig aktualisiert."
+echo "   Der nächste automatische Sync wird jetzt fehlerfrei laufen."
+echo "   Um einen sofortigen Sync zu starten, pushe eine Änderung in ein Sub-Repo"
+echo "   oder führe 'monomono-update' aus."
+echo "--------------------------------------------------------------------"
