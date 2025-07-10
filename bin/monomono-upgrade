@@ -1,9 +1,9 @@
 #!/bin/bash
 # ==============================================================================
-# MONOMONO-UPGRADE v1.4 (Final & Complete)
+# MONOMONO-UPGRADE v1.5 (Final & mit Token-Refresh)
 # ==============================================================================
-# Aktualisiert ein Fusions-Repo und alle Sub-Repos. Wenn der Haupt-Workflow
-# fehlt, wird er im Repair-Modus von Grund auf neu erstellt.
+# Aktualisiert ein Fusions-Repo, erneuert das zentrale ACCESS_TOKEN-Secret
+# und kann im "Repair-Modus" ein kaputtes Setup wiederherstellen.
 # ==============================================================================
 
 auth_check() {
@@ -16,14 +16,45 @@ auth_check() {
     echo "✔ Authentifiziert als '$GITHUB_USER'."
 }
 
+get_installation_token() {
+    local config_file=$1
+    local gh_user=$2
+    APP_ID=$(jq -r '.app_id' "$config_file")
+    PRIVATE_KEY_PATH=$(jq -r '.private_key_path' "$config_file")
+    
+    if [ ! -f "$PRIVATE_KEY_PATH" ]; then
+        echo "❌ Fehler: Die .pem-Datei aus deiner Konfiguration wurde unter '$PRIVATE_KEY_PATH' nicht gefunden." >&2
+        exit 1
+    fi
+
+    NOW=$(date +%s); IAT=$(($NOW - 60)); EXP=$(($NOW + 600))
+    HEADER_B64=$(echo -n '{"alg":"RS256","typ":"JWT"}' | base64 | tr -d '\n' | tr -d '=' | tr '/+' '_-')
+    PAYLOAD_B64=$(echo -n "{\"iat\":$IAT,\"exp\":$EXP,\"iss\":\"$APP_ID\"}" | base64 | tr -d '\n' | tr -d '=' | tr '/+' '_-')
+    SIGNATURE_B64=$(openssl dgst -sha256 -sign "$PRIVATE_KEY_PATH" <(echo -n "$HEADER_B64.$PAYLOAD_B64") | base64 | tr -d '\n' | tr -d '=' | tr '/+' '_-')
+    JWT="$HEADER_B64.$PAYLOAD_B64.$SIGNATURE_B64"
+
+    INSTALLATION_ID=$(curl -s -H "Authorization: Bearer $JWT" -H "Accept: application/vnd.github.v3+json" https://api.github.com/app/installations | jq ".[] | select(.account.login==\"$gh_user\") | .id")
+    if [ -z "$INSTALLATION_ID" ]; then echo "❌ Fehler: Die MonoMono App ist für den Benutzer '$gh_user' nicht installiert."; exit 1; fi
+    
+    INSTALLATION_TOKEN=$(curl -s -X POST -H "Authorization: Bearer $JWT" -H "Accept: application/vnd.github.v3+json" "https://api.github.com/app/installations/$INSTALLATION_ID/access_tokens" | jq -r '.token')
+    if [ -z "$INSTALLATION_TOKEN" ] || [ "$INSTALLATION_TOKEN" == "null" ]; then echo "❌ Fehler beim Erstellen des Installation-Tokens."; exit 1; fi
+    
+    export GENERATED_APP_TOKEN=$INSTALLATION_TOKEN
+}
+
 # --- HAUPTLOGIK ---
 auth_check
+CONFIG_DIR="$HOME/.monomono"
+CONFIG_FILE="$CONFIG_DIR/config.json"
 
-# 1. Ziel-Repo abfragen
-read -p "? Welches Fusions-Repo soll repariert/aktualisiert werden? (user/repo): " FUSION_REPO
+if [ ! -f "$CONFIG_FILE" ]; then
+    echo "❌ Fehler: Keine MonoMono-Konfiguration in '$CONFIG_FILE' gefunden. Bitte 'monomono' zuerst ausführen." >&2
+    exit 1
+fi
+
+read -p "? Welches Fusions-Repo soll aktualisiert werden? (Format: user/repo): " FUSION_REPO
 if [ -z "$FUSION_REPO" ]; then echo "❌ Abbruch: Kein Repo angegeben."; exit 1; fi
 
-# 2. PAT für alle API-Operationen abfragen
 echo "--------------------------------------------------------------------"
 echo "🔑 INFO: Ein persönlicher Zugriffstoken (PAT) mit 'repo' & 'workflow' Scopes wird benötigt."
 echo "--------------------------------------------------------------------"
@@ -32,7 +63,13 @@ while [ -z "$PAT" ]; do
     read -s -p "👉 Bitte füge den kopierten Token hier ein: " PAT; echo
 done
 
-# 3. Workflow auslesen (mit Repair-Modus)
+echo "-> Erneuere den App-Authentifizierungs-Token..."
+get_installation_token "$CONFIG_FILE" "$GITHUB_USER"
+
+echo "-> Speichere neuen, gültigen Token als 'ACCESS_TOKEN' Secret im Fusions-Repo..."
+GH_TOKEN=$PAT gh secret set ACCESS_TOKEN --repo "$FUSION_REPO" --body "$GENERATED_APP_TOKEN" || { echo "❌ Fehler beim Setzen des ACCESS_TOKEN-Secrets."; exit 1; }
+echo "✔ Authentifizierung für den Workflow erfolgreich erneuert."
+
 echo "-> Lese die aktuelle Konfiguration aus '$FUSION_REPO'..."
 WORKFLOW_RESPONSE=$(GH_TOKEN=$PAT gh api "repos/$FUSION_REPO/contents/.github/workflows/sync.yml" 2>/dev/null)
 IS_UPDATE=false
@@ -52,7 +89,6 @@ fi
 if [ -z "$SUB_REPOS" ]; then echo "❌ Abbruch: Keine Sub-Repos angegeben."; exit 1; fi
 echo "✔ Folgende Repos werden im Workflow konfiguriert: $SUB_REPOS"
 
-# 4. Neueste Workflow-Vorlagen definieren
 read -r -d '' SYNC_WORKFLOW_TEMPLATE << EOM
 name: 'Fusion-Repo Sync'
 on:
@@ -126,40 +162,27 @@ jobs:
           gh api --method POST "repos/\$FUSION_REPO/dispatches" -f "event_type=monomono-sync-event"
 EOM
 
-# 5. Haupt-Workflow erstellen oder aktualisieren
 if [ "$IS_UPDATE" = true ]; then
     echo "-> Aktualisiere Haupt-Workflow in '$FUSION_REPO'..."
-    GH_TOKEN=$PAT gh api --method PUT "repos/$FUSION_REPO/contents/.github/workflows/sync.yml" \
-       -f message="build: Upgrade monomono sync workflow" \
-       -f content="$(echo -n "$SYNC_WORKFLOW_TEMPLATE" | base64)" \
-       -f sha="$WORKFLOW_SHA" >/dev/null
+    GH_TOKEN=$PAT gh api --method PUT "repos/$FUSION_REPO/contents/.github/workflows/sync.yml" -f message="build: Upgrade monomono sync workflow" -f content="$(echo -n "$SYNC_WORKFLOW_TEMPLATE" | base64)" -f sha="$WORKFLOW_SHA" >/dev/null
 else
     echo "-> Erstelle neuen Haupt-Workflow in '$FUSION_REPO'..."
-    GH_TOKEN=$PAT gh api --method PUT "repos/$FUSION_REPO/contents/.github/workflows/sync.yml" \
-       -f message="build: Create/Repair monomono sync workflow" \
-       -f content="$(echo -n "$SYNC_WORKFLOW_TEMPLATE" | base64)" >/dev/null
+    GH_TOKEN=$PAT gh api --method PUT "repos/$FUSION_REPO/contents/.github/workflows/sync.yml" -f message="build: Create/Repair monomono sync workflow" -f content="$(echo -n "$SYNC_WORKFLOW_TEMPLATE" | base64)" >/dev/null
 fi
 echo "✔ Haupt-Workflow erfolgreich (neu) erstellt/aktualisiert."
 
-# 6. Trigger-Workflows in allen Sub-Repos aktualisieren (DER FEHLENDE TEIL)
 echo "-> Aktualisiere Trigger-Workflows in allen Sub-Repos..."
 for repo in $(echo "$SUB_REPOS" | sed "s/,/ /g"); do
     echo "   - Verarbeite $repo..."
     SHA_TRIGGER=$(GH_TOKEN=$PAT gh api "repos/$repo/contents/.github/workflows/monomono-trigger.yml" --jq .sha 2>/dev/null)
     if [ -n "$SHA_TRIGGER" ]; then
-        GH_TOKEN=$PAT gh api --method PUT "repos/$repo/contents/.github/workflows/monomono-trigger.yml" \
-           -f message="build: Upgrade monomono trigger workflow" \
-           -f content="$(echo -n "$TRIGGER_WORKFLOW_TEMPLATE" | base64)" \
-           -f sha="$SHA_TRIGGER" >/dev/null
+        GH_TOKEN=$PAT gh api --method PUT "repos/$repo/contents/.github/workflows/monomono-trigger.yml" -f message="build: Upgrade monomono trigger workflow" -f content="$(echo -n "$TRIGGER_WORKFLOW_TEMPLATE" | base64)" -f sha="$SHA_TRIGGER" >/dev/null
     else
-        GH_TOKEN=$PAT gh api --method PUT "repos/$repo/contents/.github/workflows/monomono-trigger.yml" \
-           -f message="feat: Add/Repair monomono trigger workflow" \
-           -f content="$(echo -n "$TRIGGER_WORKFLOW_TEMPLATE" | base64)" >/dev/null
+        GH_TOKEN=$PAT gh api --method PUT "repos/$repo/contents/.github/workflows/monomono-trigger.yml" -f message="feat: Add/Repair monomono trigger workflow" -f content="$(echo -n "$TRIGGER_WORKFLOW_TEMPLATE" | base64)" >/dev/null
     fi
 done
 echo "✔ Trigger-Workflows erfolgreich aktualisiert."
 
-# 7. Finalen Sync-Lauf anstoßen
 echo "-> Stoße einen Sync-Lauf an, um den Zustand zu bereinigen..."
 gh workflow run sync.yml --repo "$FUSION_REPO"
 echo "✅ Prozess abgeschlossen. Der Aufräum-Prozess wurde gestartet."
