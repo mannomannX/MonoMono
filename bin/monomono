@@ -289,21 +289,25 @@ jobs:
           done
 
           # == STEP 3: CREATE INTELLIGENT README ==
-          sudo apt-get update -qq && sudo apt-get install -y tree >/dev/null
-          echo "# 🤖 MonoMono Fusions-Repo" > README.md
-          echo "" >> README.md
-          echo "## 🗺️ Projekt-Map" >> README.md
-          echo "### 🧩 Komponenten" >> README.md
-          for repo in \$(echo "\$REPOS_TO_SYNC" | sed 's/,/ /g'); do
-            echo "- **[\$(basename \$repo)](./\$(basename \$repo))** (Original: [\$repo](https://github.com/\$repo))" >> README.md
-          done
-          echo "" >> README.md
-          echo "### 🌳 Verzeichnisstruktur" >> README.md
-          echo "\`\`\`" >> README.md
-          tree -L 2 -I 'README.md' >> README.md
-          echo "\`\`\`" >> README.md
-          echo "" >> README.md
-          echo "> Letzte Aktualisierung: \$(date)" >> README.md
+            sudo apt-get update -qq && sudo apt-get install -y tree >/dev/null
+            echo "# 🤖 MonoMono Fusions-Repo" > README.md
+            echo "" >> README.md
+            echo "## 🗺️ Projekt-Map" >> README.md
+            echo "### 🧩 Komponenten" >> README.md
+            for repo in \$(echo "\$REPOS_TO_SYNC" | sed 's/,/ /g'); do
+              echo "- **[\$(basename \$repo)](./\$(basename \$repo))** (Original: [\$repo](https://github.com/\$repo))" >> README.md
+            done
+            echo "" >> README.md
+            echo "### 🌳 Verzeichnisstruktur" >> README.md
+            echo "\`\`\`" >> README.md
+            tree -L 2 -I 'README.md' >> README.md
+            echo "\`\`\`" >> README.md
+            echo "" >> README.md
+            echo "---" >> README.md
+            echo "### ⚠️ Wartungshinweis" >> README.md
+            echo "> Die automatische Synchronisation durch Commits benötigt einen sicheren App-Token, der stündlich abläuft. Wenn die automatischen Updates nicht mehr funktionieren, führe lokal den Befehl \`monomono-upgrade\` aus, um alle Tokens zu erneuern." >> README.md
+            echo "" >> README.md
+            echo "> Letzte Aktualisierung: \$(date)" >> README.md
 
           # == STEP 4: COMMIT AND PUSH ==
           git config --global user.name 'github-actions[bot]'
@@ -386,6 +390,13 @@ fi
 echo "-> Starte den ersten Sync-Lauf..."
 gh workflow run sync.yml --repo "$GITHUB_USER/$FUSION_REPO_NAME"
 
+echo "--------------------------------------------------------------------"
+echo "✅ System erfolgreich eingerichtet!"
 echo
-echo "✅ Alles erledigt! Dein Fusions-Repo wird jetzt befüllt."
-echo "👀 Verfolge den Fortschritt hier: https://github.com/$GITHUB_USER/$FUSION_REPO_NAME/actions"
+echo "WICHTIGER HINWEIS:"
+echo "Die automatische Synchronisation (bei Commits) funktioniert jetzt für ca. 60 Minuten."
+echo "Danach läuft der sichere App-Token ab."
+echo
+echo "Wenn die automatischen Updates stoppen, führe einfach diesen Befehl aus, um die Tokens für eine weitere Stunde zu erneuern:"
+echo "  ./bin/monomono-upgrade"
+echo "--------------------------------------------------------------------"
