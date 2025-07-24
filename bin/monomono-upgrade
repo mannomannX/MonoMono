@@ -1,9 +1,9 @@
 #!/bin/bash
 # ==============================================================================
-# MONOMONO-UPGRADE v2.0 (Final & mit korrektem Fallback)
+# MONOMono-UPGRADE v2.1 (Final & mit robuster Extraktion)
 # ==============================================================================
-# Aktualisiert ein Fusions-Repo. Erkennt alte/neue Formate und bietet als
-# letzte Instanz eine manuelle Eingabe, wenn die Automatik versagt.
+# Aktualisiert ein Fusions-Repo. Nutzt eine stabile Lese-Logik, die auch
+# selbst erstellte Workflows zuverlässig erkennt und einen manuellen Fallback bietet.
 # ==============================================================================
 
 auth_check() {
@@ -58,17 +58,14 @@ if echo "$WORKFLOW_RESPONSE" | jq -e '.sha' > /dev/null; then
     IS_UPDATE=true; WORKFLOW_SHA=$(echo "$WORKFLOW_RESPONSE" | jq -r .sha);
     WORKFLOW_CONTENT=$(echo "$WORKFLOW_RESPONSE" | jq -r .content | base64 --decode);
     
-    # KORRIGIERTE LOGIK: Versuche Extraktion, aber brich nicht ab.
-    SUB_REPOS=$(echo "$WORKFLOW_CONTENT" | grep -oP "REPOS_TO_SYNC='([^']*)'" | sed -E "s/REPOS_TO_SYNC='([^']*)'/\1/")
-    if [ -z "$SUB_REPOS" ]; then
-        echo "   (Altes Format erkannt, versuche alternative Extraktion...)"
-        SUB_REPOS=$(echo "$WORKFLOW_CONTENT" | grep -oP "for repo in \\\$\(echo '([^']*)'" | head -n1 | sed -E "s/for repo in \\\$\(echo '([^']*)'/\1/")
-    fi
+    # FINALE, ROBUSTE EXTRAKTIONS-LOGIK
+    # Sucht nach der Zeile, die mit REPOS_TO_SYNC beginnt und extrahiert den Inhalt zwischen den einfachen Anführungszeichen.
+    SUB_REPOS=$(echo "$WORKFLOW_CONTENT" | grep "REPOS_TO_SYNC=" | sed "s/.*REPOS_TO_SYNC='//;s/'.*//")
 else
     echo "⚠️  Warnung: 'sync.yml' nicht gefunden. Wechsle in den Repair-Modus.";
 fi
 
-# FINALER FALLBACK: Manuelle Eingabe (wird jetzt immer erreicht, wenn SUB_REPOS leer ist)
+# FINALER FALLBACK: Manuelle Eingabe
 if [ -z "$SUB_REPOS" ]; then
     echo "⚠️  Konnte Sub-Repos nicht automatisch erkennen."
     read -p "? Bitte gib die zu verbindenden Sub-Repos manuell ein (user/repo1,...): " SUB_REPOS
@@ -113,7 +110,7 @@ jobs:
           done
           echo "-> Cloning sub-repos..."
           git config --global url."https://x-access-token:\${{ secrets.ACCESS_TOKEN }}@github.com/".insteadOf "https://github.com/"
-          for repo in \$(echo "\$REPOS_TO_SYNC" | sed "s/,/ /g"); do
+          for repo in \$(echo "\$REPOS_TO_SYNC" | sed 's/,/ /g'); do
             folder_name=\$(basename \$repo)
             rm -rf "\$folder_name"
             git clone --depth 1 https://github.com/\$repo.git "\$folder_name" --quiet && rm -rf "\$folder_name/.git"
