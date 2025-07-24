@@ -1,9 +1,9 @@
 #!/bin/bash
 # ==============================================================================
-# MONOMONO-UPGRADE v1.9 (Final & Ultimate Fallback)
+# MONOMONO-UPGRADE v2.0 (Final & mit korrektem Fallback)
 # ==============================================================================
 # Aktualisiert ein Fusions-Repo. Erkennt alte/neue Formate und bietet als
-# letzte Instanz eine manuelle Eingabe, um maximale Robustheit zu gewährleisten.
+# letzte Instanz eine manuelle Eingabe, wenn die Automatik versagt.
 # ==============================================================================
 
 auth_check() {
@@ -57,6 +57,8 @@ IS_UPDATE=false; SUB_REPOS=""
 if echo "$WORKFLOW_RESPONSE" | jq -e '.sha' > /dev/null; then
     IS_UPDATE=true; WORKFLOW_SHA=$(echo "$WORKFLOW_RESPONSE" | jq -r .sha);
     WORKFLOW_CONTENT=$(echo "$WORKFLOW_RESPONSE" | jq -r .content | base64 --decode);
+    
+    # KORRIGIERTE LOGIK: Versuche Extraktion, aber brich nicht ab.
     SUB_REPOS=$(echo "$WORKFLOW_CONTENT" | grep -oP "REPOS_TO_SYNC='([^']*)'" | sed -E "s/REPOS_TO_SYNC='([^']*)'/\1/")
     if [ -z "$SUB_REPOS" ]; then
         echo "   (Altes Format erkannt, versuche alternative Extraktion...)"
@@ -66,7 +68,7 @@ else
     echo "⚠️  Warnung: 'sync.yml' nicht gefunden. Wechsle in den Repair-Modus.";
 fi
 
-# FINALER FALLBACK: Manuelle Eingabe
+# FINALER FALLBACK: Manuelle Eingabe (wird jetzt immer erreicht, wenn SUB_REPOS leer ist)
 if [ -z "$SUB_REPOS" ]; then
     echo "⚠️  Konnte Sub-Repos nicht automatisch erkennen."
     read -p "? Bitte gib die zu verbindenden Sub-Repos manuell ein (user/repo1,...): " SUB_REPOS
